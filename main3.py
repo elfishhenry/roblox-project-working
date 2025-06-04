@@ -16,6 +16,8 @@ load_dotenv()
 
 # Discord token (still recommended to keep token in .env or environment variable)
 TOKEN = os.getenv("TOKEN")
+XTRACKER_API_KEY = os.getenv("XTRACKER_API_KEY")
+
 
 # New Spreadsheet ID from your provided Google Sheets link
 SPREADSHEET_ID = "1r44AVDsu8qQ74MUaPSZIDGIHDo6GgF_qpUaMAC5OxXs"
@@ -58,16 +60,17 @@ def get_blacklisted_ids():
     return set(filter(str.isdigit, blacklist_column))  # Only numeric IDs
     
 
-def safe_get(url, max_retries=3, backoff_factor=1):
+def safe_get(url, max_retries=3, backoff_factor=1, headers=None):
     for attempt in range(max_retries):
         try:
-            resp = requests.get(url)
+            resp = requests.get(url, headers=headers)
             resp.raise_for_status()
             return resp
         except (ConnectionError, HTTPError):
             if attempt == max_retries - 1:
                 return None
             time.sleep(backoff_factor * (2 ** attempt))
+
 
 def parse_roblox_date(date_str):
     try:
@@ -116,9 +119,53 @@ def check_account_age(user_created_date_str):
     created_date = parse_roblox_date(user_created_date_str)
     return (datetime.utcnow() - created_date).days
 
-import matplotlib.pyplot as plt
-import io
-import discord
+def check_xtracker_report(user_id):
+    """Check if user has any cheat reports on xTracker."""
+    headers = {"Authorization": XTRACKER_API_KEY}
+    url = f"https://api.xtracker.xyz/api/registry/user?id={user_id}"
+    resp = safe_get(url, headers=headers)
+    if not resp:
+        return False  # Could not fetch data, treat as no report
+    
+    data = resp.json()
+    # The API returns a list of reports. If list is empty, no reports found.
+    return bool(data)
+
+def check_xtracker_report(user_id):
+    """Check if user has any cheat reports on xTracker."""
+    headers = {"Authorization": XTRACKER_API_KEY}
+    url = f"https://api.xtracker.xyz/api/registry/user?id={user_id}"
+    resp = safe_get(url, headers=headers)
+    if not resp:
+        return False  # Could not fetch data, treat as no report
+    
+    data = resp.json()
+    # The API returns a list of reports. If list is empty, no reports found.
+    return bool(data)
+
+def check_xtracker_ownership(user_id):
+    """Check if user owns cheats on xTracker."""
+    headers = {"Authorization": XTRACKER_API_KEY}
+    url = f"https://api.xtracker.xyz/api/ownership/user?id={user_id}"
+    resp = safe_get(url, headers=headers)
+    if not resp:
+        return False  # Could not fetch data, treat as no cheats owned
+    
+    data = resp.json()
+    return bool(data)
+
+
+def check_xtracker_ownership(user_id):
+    """Check if user owns cheats on xTracker."""
+    headers = {"Authorization": XTRACKER_API_KEY}
+    url = f"https://api.xtracker.xyz/api/ownership/user?id={user_id}"
+    resp = safe_get(url, headers=headers)
+    if not resp:
+        return False  # Could not fetch data, treat as no cheats owned
+    
+    data = resp.json()
+    return bool(data)
+
 
 def get_badge_dates(user_id):
     # Fetch all badge data for the user
@@ -146,39 +193,6 @@ def get_badge_dates(user_id):
             date_list.append(date_obj.date())
     return date_list
 
-async def plot_badges_vs_dates(interaction, user_id):
-    date_list = get_badge_dates(user_id)
-    if not date_list:
-        await interaction.followup.send("No badge data available for this user.")
-        return
-
-    # Count badges per date
-    from collections import Counter
-    date_counts = Counter(date_list)
-    dates_sorted = sorted(date_counts)
-    counts = [date_counts[d] for d in dates_sorted]
-
-    # Plot
-    plt.figure(figsize=(10, 5))
-    plt.scatter(dates_sorted, counts, color='blue')
-    plt.plot(dates_sorted, counts, linestyle='dotted', color='gray', alpha=0.5)
-    plt.xlabel("Date")
-    plt.ylabel("Badges Earned")
-    plt.title("Badges Earned Per Date")
-    plt.xticks(rotation=45)
-    plt.tight_layout()
-
-    # Save plot to a BytesIO buffer
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png')
-    buf.seek(0)
-    plt.close()
-
-    # Send plot as a Discord file
-    file = discord.File(buf, filename="badges_vs_dates.png")
-    await interaction.followup.send("Here is the badge earning graph:", file=file)
-
-
 def check_user_acceptance(user_id):
     user_info = get_user_info(user_id)
     if not user_info:
@@ -186,6 +200,10 @@ def check_user_acceptance(user_id):
 
     blacklist = get_blacklisted_ids()
     is_blacklisted = str(user_id) in blacklist
+
+    # xTracker checks
+    has_xtracker_report = check_xtracker_report(user_id)
+    owns_cheats = check_xtracker_ownership(user_id)
 
     created_date_str = user_info.get("created")
     account_age_days = check_account_age(created_date_str) if created_date_str else 0
@@ -198,6 +216,8 @@ def check_user_acceptance(user_id):
         f"🆔 **User ID:** {user_id}",
         "",
         f"🚫 Blacklisted: {'Yes' if is_blacklisted else 'No'}",
+        f"❌ xTracker Reported for Cheats: {'Yes' if has_xtracker_report else 'No'}",
+        f"❌ Owns Cheats (xTracker): {'Yes' if owns_cheats else 'No'}",
         "",
         f"📆 Account Age: {account_age_days} days (Required: 90) → {'✅' if account_age_days >= 90 else '❌'}",
         f"🤝 Friends Count: {friends} (Required: 10) → {'✅' if friends >= 10 else '❌'}",
@@ -205,8 +225,8 @@ def check_user_acceptance(user_id):
         f"👥 Groups Count: {groups} (Required: 2) → {'✅' if groups >= 2 else '❌'}",
     ]
 
-    if is_blacklisted:
-        result_lines.append("\n⚠️ User is **blacklisted** and may be restricted.")
+    if is_blacklisted or has_xtracker_report or owns_cheats:
+        result_lines.append("\n⚠️ User is **blacklisted or flagged by xTracker** and may be restricted.")
     elif all([
         account_age_days >= 90,
         friends >= 10,
@@ -225,12 +245,6 @@ async def check_user(interaction: discord.Interaction, user_id: int):
     await interaction.response.defer()
     result = check_user_acceptance(user_id)
     await interaction.followup.send(result)
-
-@tree.command(name="badgegraph", description="Show a graph of badges earned per date")
-@app_commands.describe(user_id="Roblox user ID to graph")
-async def badgegraph(interaction: discord.Interaction, user_id: int):
-    await interaction.response.defer()
-    await plot_badges_vs_dates(interaction, user_id)
 
 
 @bot.event
