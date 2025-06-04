@@ -239,7 +239,14 @@ async def check_user(interaction: discord.Interaction, users: str):
 
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user}!")
+    try:
+        # Clear commands if you want to remove old cached commands
+        bot.tree.clear_commands(guild=None)  # Use guild=your_guild_object for guild commands
+        # Sync commands globally or per guild
+        await bot.tree.sync()
+        print("Slash commands synced successfully.")
+    except Exception as e:
+        print(f"Failed to sync commands: {e}")
 
 from flask import Flask
 import threading
