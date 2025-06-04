@@ -10,6 +10,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import os
 from dotenv import load_dotenv
+import math
 
 load_dotenv()
 
@@ -102,7 +103,9 @@ def get_badges_count(user_id):
         cursor = data.get("nextPageCursor")
         if not cursor:
             break
-    return len(badges)
+    total_badges = len(badges)
+    page_count = math.ceil(total_badges / 30)
+    return total_badges, page_count
 
 def get_groups_count(user_id):
     url = f"{ROBLOX_GROUPS_API}/users/{user_id}/groups/roles"
@@ -124,7 +127,7 @@ def check_user_acceptance(user_id):
     created_date_str = user_info.get("created")
     account_age_days = check_account_age(created_date_str) if created_date_str else 0
     friends = get_friends_count(user_id)
-    badges = get_badges_count(user_id)
+    badges, badge_pages = get_badges_count(user_id)
     groups = get_groups_count(user_id)
 
     result_lines = [
@@ -135,7 +138,7 @@ def check_user_acceptance(user_id):
         "",
         f"📆 Account Age: {account_age_days} days (Required: 90) → {'✅' if account_age_days >= 90 else '❌'}",
         f"🤝 Friends Count: {friends} (Required: 10) → {'✅' if friends >= 10 else '❌'}",
-        f"🏅 Badges Count: {badges} (Required: 10) → {'✅' if badges >= 10 else '❌'}",
+        f"🏅 Badges: {badges} total ({badge_pages} pages, Required: 10 pages) → {'✅' if badge_pages >= 10 else '❌'}",
         f"👥 Groups Count: {groups} (Required: 2) → {'✅' if groups >= 2 else '❌'}",
     ]
 
@@ -144,7 +147,7 @@ def check_user_acceptance(user_id):
     elif all([
         account_age_days >= 90,
         friends >= 10,
-        badges >= 10,
+        badge_pages >= 10,
         groups >= 2,
     ]):
         result_lines.append("\n✅ User **meets** the acceptance criteria.")
