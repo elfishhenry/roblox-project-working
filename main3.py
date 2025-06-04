@@ -19,7 +19,7 @@ import asyncio
 load_dotenv()
 
 TOKEN = os.getenv("TOKEN")
-SPREADSHEET_ID = "1r44AVDsu8qQ74MUaPSZIDGIHDo6GgF_qpUaMAC5OxXs"
+SPREADSHEET_ID = "1C-Jd9G7XQVDhiKfJC0PyFMPr5tqXURrKY5KH9Q_1F6s"
 
 SERVICE_ACCOUNT_INFO = {
   "type": "service_account",
