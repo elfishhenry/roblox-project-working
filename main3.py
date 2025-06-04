@@ -10,18 +10,14 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import os
 from dotenv import load_dotenv
-import math
 
 load_dotenv()
 
 # Discord token (still recommended to keep token in .env or environment variable)
 TOKEN = os.getenv("TOKEN")
-XTRACKER_API_KEY = os.getenv("XTRACKER_API_KEY")
-CLANWARE_API_KEY = os.getenv("CLANWARE_API_KEY")
-
 
 # New Spreadsheet ID from your provided Google Sheets link
-SPREADSHEET_ID = "1C-Jd9G7XQVDhiKfJC0PyFMPr5tqXURrKY5KH9Q_1F6s"
+SPREADSHEET_ID = "1r44AVDsu8qQ74MUaPSZIDGIHDo6GgF_qpUaMAC5OxXs"
 
 # Your Google Service Account JSON credentials as a dict (paste your JSON here)
 SERVICE_ACCOUNT_INFO = {
@@ -61,17 +57,16 @@ def get_blacklisted_ids():
     return set(filter(str.isdigit, blacklist_column))  # Only numeric IDs
     
 
-def safe_get(url, max_retries=3, backoff_factor=1, headers=None):
+def safe_get(url, max_retries=3, backoff_factor=1):
     for attempt in range(max_retries):
         try:
-            resp = requests.get(url, headers=headers)
+            resp = requests.get(url)
             resp.raise_for_status()
             return resp
         except (ConnectionError, HTTPError):
             if attempt == max_retries - 1:
                 return None
             time.sleep(backoff_factor * (2 ** attempt))
-
 
 def parse_roblox_date(date_str):
     try:
@@ -107,180 +102,105 @@ def get_badges_count(user_id):
         cursor = data.get("nextPageCursor")
         if not cursor:
             break
-    total_badges = len(badges)
-    page_count = math.ceil(total_badges / 30)
-    return total_badges, page_count
-
-def check_clanware_report(user_id):
-    headers = {"Authorization": CLANWARE_API_KEY}
-    url = f"https://api.clanware.xyz/user/check?id={user_id}"
-    resp = safe_get(url, headers=headers)
-    if not resp:
-        return False  # Treat failure as no flag
-    
-    data = resp.json()
-    # Adjust this condition depending on actual Clanware API response
-    return data.get("isFlagged", False)
-
-
+    return len(badges)
 
 def get_groups_count(user_id):
     url = f"{ROBLOX_GROUPS_API}/users/{user_id}/groups/roles"
     resp = safe_get(url)
     return len(resp.json().get("data", [])) if resp else 0
 
-def check_account_age(user_created_date_str):
-    created_date = parse_roblox_date(user_created_date_str)
-    return (datetime.utcnow() - created_date).days
+def get_xtracker_evidence(user_id):
+    # TODO: Replace this stub with real XTracker data retrieval
+    # Return None if no evidence
+    # Return dict with keys: date, proof_type, linking_user, tracker_emoji, linked_user
 
-def check_xtracker_report(user_id):
-    """Check if user has any cheat reports on xTracker."""
-    headers = {"Authorization": XTRACKER_API_KEY}
-    url = f"https://api.xtracker.xyz/api/registry/user?id={user_id}"
-    resp = safe_get(url, headers=headers)
-    if not resp:
-        return False  # Could not fetch data, treat as no report
-    
-    data = resp.json()
-    # The API returns a list of reports. If list is empty, no reports found.
-    return bool(data)
+    # Example hardcoded data for demonstration:
+    if str(user_id) == "123456789":
+        return {
+            "date": "2024-07-13T00:00:00Z",
+            "proof_type": "Alt Proof",
+            "linking_user": "lightasrm",
+            "tracker_emoji": ":trackerLink:",
+            "linked_user": "southsouljah"
+        }
+    return None
 
-def check_xtracker_report(user_id):
-    """Check if user has any cheat reports on xTracker."""
-    headers = {"Authorization": XTRACKER_API_KEY}
-    url = f"https://api.xtracker.xyz/api/registry/user?id={user_id}"
-    resp = safe_get(url, headers=headers)
-    if not resp:
-        return False  # Could not fetch data, treat as no report
-    
-    data = resp.json()
-    # The API returns a list of reports. If list is empty, no reports found.
-    return bool(data)
+@tree.command(name="checkacceptance", description="Check acceptance criteria of a Roblox user by ID or username")
+@app_commands.describe(user="Roblox user ID or username")
+async def checkacceptance(interaction: discord.Interaction, user: str):
+    await interaction.response.defer()  # defer reply for long operations
 
-def check_xtracker_ownership(user_id):
-    """Check if user owns cheats on xTracker."""
-    headers = {"Authorization": XTRACKER_API_KEY}
-    url = f"https://api.xtracker.xyz/api/ownership/user?id={user_id}"
-    resp = safe_get(url, headers=headers)
-    if not resp:
-        return False  # Could not fetch data, treat as no cheats owned
-    
-    data = resp.json()
-    return bool(data)
-
-
-def check_xtracker_ownership(user_id):
-    """Check if user owns cheats on xTracker."""
-    headers = {"Authorization": XTRACKER_API_KEY}
-    url = f"https://api.xtracker.xyz/api/ownership/user?id={user_id}"
-    resp = safe_get(url, headers=headers)
-    if not resp:
-        return False  # Could not fetch data, treat as no cheats owned
-    
-    data = resp.json()
-    return bool(data)
-
-
-def get_badge_dates(user_id):
-    # Fetch all badge data for the user
-    badges = []
-    limit = 100
-    cursor = None
-    while True:
-        url = f"{ROBLOX_BADGES_API}/users/{user_id}/badges?limit={limit}"
-        if cursor:
-            url += f"&cursor={cursor}"
+    # Determine if input is a user ID (digits) or username (string)
+    user_id = None
+    if user.isdigit():
+        user_id = int(user)
+    else:
+        # Lookup by username to get user ID
+        url = f"{ROBLOX_USERS_API}/users/get-by-username?username={user}"
         resp = safe_get(url)
-        if not resp:
-            break
-        data = resp.json()
-        badges.extend(data.get("data", []))
-        cursor = data.get("nextPageCursor")
-        if not cursor:
-            break
-    # Extract dates
-    date_list = []
-    for badge in badges:
-        awarded_date = badge.get("awardedDate")
-        if awarded_date:
-            date_obj = parse_roblox_date(awarded_date)
-            date_list.append(date_obj.date())
-    return date_list
+        if not resp or resp.status_code != 200:
+            await interaction.followup.send(f"User `{user}` not found.")
+            return
+        user_id = resp.json().get("Id")
+        if not user_id:
+            await interaction.followup.send(f"User `{user}` not found.")
+            return
 
-def check_user_acceptance(user_id):
+    # Blacklist check
+    blacklisted_ids = get_blacklisted_ids()
+    is_blacklisted = str(user_id) in blacklisted_ids
+
     user_info = get_user_info(user_id)
     if not user_info:
-        return "❌ Could not fetch user info from Roblox."
+        await interaction.followup.send(f"Failed to fetch data for user ID `{user_id}`.")
+        return
 
-    blacklist = get_blacklisted_ids()
-    is_blacklisted = str(user_id) in blacklist
+    # Account age calculation
+    created_str = user_info.get("created")
+    created_date = parse_roblox_date(created_str) if created_str else None
+    account_age_days = (datetime.utcnow() - created_date).days if created_date else 0
 
-    # xTracker checks
-    has_xtracker_report = check_xtracker_report(user_id)
-    owns_cheats = check_xtracker_ownership(user_id)
-
-    # Clanware check
-    is_clanware_flagged = check_clanware_report(user_id)
-
-    created_date_str = user_info.get("created")
-    account_age_days = check_account_age(created_date_str) if created_date_str else 0
     friends = get_friends_count(user_id)
-    badges, badge_pages = get_badges_count(user_id)
+    badges = get_badges_count(user_id)
     groups = get_groups_count(user_id)
+
+    # Acceptance criteria thresholds
+    required_account_age = 90
+    required_friends = 10
+    required_badges = 10
+    required_groups = 2
 
     result_lines = [
         f"👤 **Username:** {user_info.get('name')}",
         f"🆔 **User ID:** {user_id}",
         "",
         f"🚫 Blacklisted: {'Yes' if is_blacklisted else 'No'}",
-        f"❌ xTracker Reported for Cheats: {'Yes' if has_xtracker_report else 'No'}",
-        f"❌ Owns Cheats (xTracker): {'Yes' if owns_cheats else 'No'}",
-        f"❌ Clanware Flagged: {'Yes' if is_clanware_flagged else 'No'}",
         "",
-        f"📆 Account Age: {account_age_days} days (Required: 90) → {'✅' if account_age_days >= 90 else '❌'}",
-        f"🤝 Friends Count: {friends} (Required: 10) → {'✅' if friends >= 10 else '❌'}",
-        f"🏅 Badges: {badges} total ({badge_pages} pages, Required: 10 pages) → {'✅' if badge_pages >= 10 else '❌'}",
-        f"👥 Groups Count: {groups} (Required: 2) → {'✅' if groups >= 2 else '❌'}",
+        f"📆 Account Age: {account_age_days} days (Required: {required_account_age}) → {'✅' if account_age_days >= required_account_age else '❌'}",
+        f"🤝 Friends Count: {friends} (Required: {required_friends}) → {'✅' if friends >= required_friends else '❌'}",
+        f"🏅 Badges Count: {badges} (Required: {required_badges}) → {'✅' if badges >= required_badges else '❌'}",
+        f"👥 Groups Count: {groups} (Required: {required_groups}) → {'✅' if groups >= required_groups else '❌'}",
     ]
 
-    if is_blacklisted or has_xtracker_report or owns_cheats or is_clanware_flagged:
-        result_lines.append("\n⚠️ User is **blacklisted or flagged by xTracker/Clanware** and may be restricted.")
-    elif all([
-        account_age_days >= 90,
-        friends >= 10,
-        badge_pages >= 10,
-        groups >= 2,
-    ]):
-        result_lines.append("\n✅ User **meets** the acceptance criteria.")
+    # Add XTracker evidence info
+    evidence = get_xtracker_evidence(user_id)
+    if evidence:
+        dt = datetime.strptime(evidence["date"], "%Y-%m-%dT%H:%M:%SZ")
+        formatted_date = dt.strftime("%m/%d/%Y %I:%M:%S %p")
+
+        xtracker_line = (
+            f"XTracker Evidence?\n"
+            f"Yes, last evidence on {formatted_date} for {evidence['proof_type']} | "
+            f"Linking {evidence['linking_user']} {evidence['tracker_emoji']} {evidence['linked_user']}"
+        )
     else:
-        result_lines.append("\n❌ User **does NOT meet** the acceptance criteria.")
+        xtracker_line = "XTracker Evidence?\nNo"
 
-    return "\n".join(result_lines)
+    result_lines.append("")
+    result_lines.append(xtracker_line)
 
-@tree.command(name="check", description="Check Roblox user acceptance criteria by ID")
-@app_commands.describe(user_id="Roblox user ID to check")
-async def check_user(interaction: discord.Interaction, user_id: int):
-    await interaction.response.defer()
-    result = check_user_acceptance(user_id)
-    await interaction.followup.send(result)
+    result_text = "\n".join(result_lines)
 
-
-@bot.event
-async def on_ready():
-    print(f"Logged in as {bot.user}!")
-
-from flask import Flask
-import threading
-
-app = Flask("")
-
-@app.route("/")
-def home():
-    return "I'm alive!"
-
-def run_flask():
-    app.run(host="0.0.0.0", port=8080)
-
-threading.Thread(target=run_flask).start()
+    await interaction.followup.send(f"```{result_text}```")
 
 bot.run(TOKEN)
