@@ -232,6 +232,10 @@ async def check_user(interaction: discord.Interaction, users: str):
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}!")
+    await bot.tree.sync()
+
+bot.run(TOKEN)
+
 
 from flask import Flask
 import threading
