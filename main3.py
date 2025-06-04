@@ -17,6 +17,7 @@ load_dotenv()
 # Discord token (still recommended to keep token in .env or environment variable)
 TOKEN = os.getenv("TOKEN")
 XTRACKER_API_KEY = os.getenv("XTRACKER_API_KEY")
+CLANWARE_API_KEY = os.getenv("CLANWARE_API_KEY")
 
 
 # New Spreadsheet ID from your provided Google Sheets link
@@ -109,6 +110,19 @@ def get_badges_count(user_id):
     total_badges = len(badges)
     page_count = math.ceil(total_badges / 30)
     return total_badges, page_count
+
+def check_clanware_report(user_id):
+    headers = {"Authorization": CLANWARE_API_KEY}
+    url = f"https://api.clanware.xyz/user/check?id={user_id}"
+    resp = safe_get(url, headers=headers)
+    if not resp:
+        return False  # Treat failure as no flag
+    
+    data = resp.json()
+    # Adjust this condition depending on actual Clanware API response
+    return data.get("isFlagged", False)
+
+
 
 def get_groups_count(user_id):
     url = f"{ROBLOX_GROUPS_API}/users/{user_id}/groups/roles"
@@ -205,6 +219,9 @@ def check_user_acceptance(user_id):
     has_xtracker_report = check_xtracker_report(user_id)
     owns_cheats = check_xtracker_ownership(user_id)
 
+    # Clanware check
+    is_clanware_flagged = check_clanware_report(user_id)
+
     created_date_str = user_info.get("created")
     account_age_days = check_account_age(created_date_str) if created_date_str else 0
     friends = get_friends_count(user_id)
@@ -218,6 +235,7 @@ def check_user_acceptance(user_id):
         f"🚫 Blacklisted: {'Yes' if is_blacklisted else 'No'}",
         f"❌ xTracker Reported for Cheats: {'Yes' if has_xtracker_report else 'No'}",
         f"❌ Owns Cheats (xTracker): {'Yes' if owns_cheats else 'No'}",
+        f"❌ Clanware Flagged: {'Yes' if is_clanware_flagged else 'No'}",
         "",
         f"📆 Account Age: {account_age_days} days (Required: 90) → {'✅' if account_age_days >= 90 else '❌'}",
         f"🤝 Friends Count: {friends} (Required: 10) → {'✅' if friends >= 10 else '❌'}",
@@ -225,8 +243,8 @@ def check_user_acceptance(user_id):
         f"👥 Groups Count: {groups} (Required: 2) → {'✅' if groups >= 2 else '❌'}",
     ]
 
-    if is_blacklisted or has_xtracker_report or owns_cheats:
-        result_lines.append("\n⚠️ User is **blacklisted or flagged by xTracker** and may be restricted.")
+    if is_blacklisted or has_xtracker_report or owns_cheats or is_clanware_flagged:
+        result_lines.append("\n⚠️ User is **blacklisted or flagged by xTracker/Clanware** and may be restricted.")
     elif all([
         account_age_days >= 90,
         friends >= 10,
