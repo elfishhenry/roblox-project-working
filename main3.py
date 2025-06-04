@@ -11,17 +11,16 @@ from oauth2client.service_account import ServiceAccountCredentials
 import os
 from dotenv import load_dotenv
 import math
+import matplotlib.pyplot as plt
+import io
+from collections import Counter
 import asyncio
 
 load_dotenv()
 
-# Discord token (still recommended to keep token in .env or environment variable)
 TOKEN = os.getenv("TOKEN")
-
-# New Spreadsheet ID from your provided Google Sheets link
 SPREADSHEET_ID = "1r44AVDsu8qQ74MUaPSZIDGIHDo6GgF_qpUaMAC5OxXs"
 
-# Your Google Service Account JSON credentials as a dict (paste your JSON here)
 SERVICE_ACCOUNT_INFO = {
   "type": "service_account",
   "project_id": "searchy-428415",
@@ -36,28 +35,24 @@ SERVICE_ACCOUNT_INFO = {
   "universe_domain": "googleapis.com"
 }
 
-# Roblox API base URLs
+
 ROBLOX_USERS_API = "https://users.roblox.com/v1"
 ROBLOX_FRIENDS_API = "https://friends.roblox.com/v1"
 ROBLOX_BADGES_API = "https://badges.roblox.com/v1"
 ROBLOX_GROUPS_API = "https://groups.roblox.com/v2"
 
-# Setup Discord bot
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
-# Setup Google Sheets client
 def get_blacklisted_ids():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     creds = ServiceAccountCredentials.from_json_keyfile_dict(SERVICE_ACCOUNT_INFO, scope)
     client = gspread.authorize(creds)
-    print("blacklisted checked")
     sheet = client.open_by_key(SPREADSHEET_ID).get_worksheet(1)  # second sheet (index 1)
     blacklist_column = sheet.col_values(4)  # Column D
-    return set(filter(str.isdigit, blacklist_column))  # Only numeric IDs
-    
+    return set(filter(str.isdigit, blacklist_column))
 
 def safe_get(url, max_retries=3, backoff_factor=1):
     for attempt in range(max_retries):
@@ -79,13 +74,11 @@ def parse_roblox_date(date_str):
 def get_user_info(user_id):
     url = f"{ROBLOX_USERS_API}/users/{user_id}"
     resp = safe_get(url)
-    print("info gotten")
     return resp.json() if resp else None
 
 def get_friends_count(user_id):
     url = f"{ROBLOX_FRIENDS_API}/users/{user_id}/friends/count"
     resp = safe_get(url)
-    print("Friends Gotten")
     return resp.json().get("count", 0) if resp else 0
 
 def get_badges_count(user_id):
@@ -107,6 +100,24 @@ def get_badges_count(user_id):
     total_badges = len(badges)
     page_count = math.ceil(total_badges / 30)
     return total_badges, page_count
+
+def get_badges_with_dates(user_id):
+    badges = []
+    limit = 100
+    cursor = None
+    while True:
+        url = f"{ROBLOX_BADGES_API}/users/{user_id}/badges?limit={limit}"
+        if cursor:
+            url += f"&cursor={cursor}"
+        resp = safe_get(url)
+        if not resp:
+            break
+        data = resp.json()
+        badges.extend(data.get("data", []))
+        cursor = data.get("nextPageCursor")
+        if not cursor:
+            break
+    return badges
 
 def get_groups_count(user_id):
     url = f"{ROBLOX_GROUPS_API}/users/{user_id}/groups/roles"
@@ -157,18 +168,61 @@ def check_user_acceptance(user_id):
 
     return "\n".join(result_lines)
 
+async def create_badges_timeline_image(user_id):
+    # Fetch badges with dates in a thread since safe_get is blocking
+    badges = await asyncio.to_thread(get_badges_with_dates, user_id)
+
+    dates = []
+    for badge in badges:
+        # Change "awardedAt" to whatever date field is actually in the badge JSON
+        awarded_at = badge.get("awardedAt") or badge.get("earnedDate")
+        if awarded_at:
+            try:
+                dt = parse_roblox_date(awarded_at)
+                dates.append(dt)
+            except Exception:
+                continue
+
+    if not dates:
+        return None
+
+    dates.sort()
+    months = [dt.strftime("%Y-%m") for dt in dates]
+    counts = Counter(months)
+    sorted_months = sorted(counts.keys())
+    counts_values = [counts[m] for m in sorted_months]
+
+    plt.figure(figsize=(10, 4))
+    plt.bar(sorted_months, counts_values, color="blue")
+    plt.xticks(rotation=45)
+    plt.title(f"Badge Earned Timeline for User {user_id}")
+    plt.ylabel("Badges Earned")
+    plt.tight_layout()
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png")
+    plt.close()
+    buf.seek(0)
+    return buf
+
 @tree.command(name="check", description="Check Roblox user acceptance criteria by ID")
 @app_commands.describe(user_id="Roblox user ID to check")
 async def check_user(interaction: discord.Interaction, user_id: int):
-    await interaction.response.defer(ephemeral=False)  # ephemeral if you want only user to see
-
-    try:
-        # Run the blocking check_user_acceptance in a thread pool executor
-        result = await asyncio.to_thread(check_user_acceptance, user_id)
-    except Exception as e:
-        result = f"❌ An error occurred while processing the request:\n{e}"
-
+    await interaction.response.defer()
+    result = check_user_acceptance(user_id)
     await interaction.followup.send(result)
+
+@tree.command(name="badgetimeline", description="Show badge earned timeline graph")
+@app_commands.describe(user_id="Roblox user ID to check")
+async def badge_timeline(interaction: discord.Interaction, user_id: int):
+    await interaction.response.defer()
+    image_buffer = await create_badges_timeline_image(user_id)
+    if not image_buffer:
+        await interaction.followup.send("No badge earned date data available for this user.")
+        return
+
+    file = discord.File(fp=image_buffer, filename="badge_timeline.png")
+    await interaction.followup.send(file=file)
 
 @bot.event
 async def on_ready():
