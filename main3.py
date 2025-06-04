@@ -11,6 +11,8 @@ from oauth2client.service_account import ServiceAccountCredentials
 import os
 from dotenv import load_dotenv
 from typing import Optional
+from datetime import datetime, timezone, timedelta
+
 
 load_dotenv()
 
@@ -55,6 +57,17 @@ def parse_roblox_date(date_str):
         return datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S.%fZ")
     except ValueError:
         return datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%SZ")
+
+def get_current_date_discord_timestamp():
+# SAST is UTC+2
+    SAST = timezone(timedelta(hours=2))
+    now_sast = datetime.now(SAST)
+# Convert to UTC timestamp (Discord timestamps are UTC-based)
+    now_utc = now_sast.astimezone(timezone.utc)
+    unix_timestamp = int(now_utc.timestamp())
+# Use format 'F' for full date/time, you can change to 'f', 'R', etc.
+    return f"<t:{unix_timestamp}:F>"
+
 
 def get_user_info(user_id):
     url = f"{ROBLOX_USERS_API}/users/{user_id}"
@@ -119,19 +132,17 @@ def get_xtracker_evidence(user_id):
         return None
 
     data = resp.json()
-    # Assume data['evidence'] is a list, pick the last item if exists
     evidence_list = data.get("evidence", [])
     if not evidence_list:
         return None
 
     last_evidence = evidence_list[-1]
-    # Example fields, adjust to your actual API response
     date_str = last_evidence.get("date")  # e.g. "2024-07-13T00:00:00Z"
     proof_type = last_evidence.get("type")  # e.g. "Alt Proof"
     linked_user = last_evidence.get("linkedUser")  # e.g. "lightasrm"
     tracker_linked_user = last_evidence.get("trackerLinkedUser")  # e.g. "southsouljah"
 
-    # Format date nicely
+    # Format date as MM/DD/YYYY 12:00:00 AM
     try:
         dt = datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%SZ")
         date_formatted = dt.strftime("%m/%d/%Y %I:%M:%S %p")
@@ -140,7 +151,6 @@ def get_xtracker_evidence(user_id):
 
     return f"Yes, last evidence on {date_formatted} for {proof_type} | Linking {linked_user} :trackerLink: {tracker_linked_user}"
 
-# Then, inside check_user_acceptance(), after the other checks, add:
 
 def check_user_acceptance(user_id):
     user_info = get_user_info(user_id)
@@ -173,6 +183,13 @@ def check_user_acceptance(user_id):
     evidence_text = get_xtracker_evidence(user_id)
     if evidence_text:
         result_lines.append("\nXTracker Evidence?\n" + evidence_text)
+    else:
+        result_lines.append("\nXTracker Evidence?\nNo evidence found.")
+
+    # Add current date/time in SAST
+    current_date = get_current_date_discord_timestamp()
+    result_lines.append(f"\nCurrent date: {current_date}")
+
 
     if is_blacklisted:
         result_lines.append("\n⚠️ User is **blacklisted** and may be restricted.")
@@ -187,6 +204,7 @@ def check_user_acceptance(user_id):
         result_lines.append("\n❌ User **does NOT meet** the acceptance criteria.")
 
     return "\n".join(result_lines)
+
 
 @tree.command(name="check", description="Check multiple Roblox users by username or ID (space separated)")
 @app_commands.describe(users="Usernames or IDs separated by spaces")
