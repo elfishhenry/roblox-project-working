@@ -10,52 +10,34 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import os
 from dotenv import load_dotenv
+from typing import Optional
 
 load_dotenv()
 
-# Discord token (still recommended to keep token in .env or environment variable)
 TOKEN = os.getenv("TOKEN")
-
-# New Spreadsheet ID from your provided Google Sheets link
 SPREADSHEET_ID = "1r44AVDsu8qQ74MUaPSZIDGIHDo6GgF_qpUaMAC5OxXs"
 
-# Your Google Service Account JSON credentials as a dict (paste your JSON here)
 SERVICE_ACCOUNT_INFO = {
-  "type": "service_account",
-  "project_id": "searchy-428415",
-  "private_key_id": "a672afb4b7fd10faf5237fc3422f33e179a4d9cb",
-  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDrOdNHpyDbWb16\nYfWe3U+tc32yL05Z7QCNHJxJVG0xEhprkuaJOu4u1vKyDNqRkA+wy2yM+d6dgmkv\nsJgDa7yYDAa5DMp2SVYxSNF/n5ky+OWWu2raR8XlL1WbJ94CRALsPKlSr+7jGPJd\n32xpACS6DvbtHX3CHHFlU9/1dF2UMnL6uCyYFd2BAWn+HIlr0HlbMlhxt8MkhURx\ngObAk73DVVzPBMlWs+vtqPjRhmVVU/t/32V9OghJwYkKUUM/8JwLrYdpNgvCj/y8\nqEZlqR1IN6JpTt4dEFKHOqNDkDW0ZZt7vST6pDkZEVNc84Kl1jpZcb7pAl+kfbyB\nktn6IXa9AgMBAAECggEACwTUbuDXWy8i/x6joOOBHgDw/G3W38OIaRPUBmNcEhZl\nAnEJN5h5G9yZ1dlgS71R3thIp3n1Aa/gOYmuNUrQtNarYfPFcDETRo/AsJfLV2Xt\na1gwMzV1gbzr567AaZ7B/EsDK4puSFkc0WTr8Sc+kTCuRIFDKNqoPTTmotrmn1B+\nsHB4duA0xkVUUpTxIM9QAiMpmRXyT8fGw1pa30+qMmVQNvcizLFR9gUeEwTaxg1u\n8Hd1nMfj8N9DsxsAQ5tOgvrZgKxlRlFCs5/pnUBFuy01r3bLe9Unlu2mnShCeAwn\np2kVKCy2uhSmchmF+zQkLNL1w51Apg6KzA9lTvYkwQKBgQD39GMJy/hikmAjWnQs\nsNeCS1wujq/y0hI9zin8HWHT148CcNZl4m8m2ra+wDAwNhBHLUD8Gz1qWDxnYuQq\nLswo9Z4+EzA2ABsd/rQZ3/Ci85YSCbRX52NbK5kNaKPSHSrhlcclNQ+Lk9L5ZLr4\nEzr0cIE8bS/ZkuWVx0vKQDeZyQKBgQDy27VKNfYmgQzL5m3ZKld1W0nCzI3I1wc+\naeAnXxsbSArYwqJRH4ltPQznK0a29uM5wFLbGntOU/vT5+jl0Pg+hy/EdLfJ2+2y\neQY/xXAuqRuSUY3v5JHUfrejS+yWQ8otgoBgECPc0YME2gmBAYB5XOufycnUWAp8\n5nT6LrOvVQKBgFAn3sRR/c/Pxehn21p/KIvkVL5wPgzfQCpetU/dJ7zV2FNPqt9w\n3cHPvnfXpTxQnd6EkJdvLuFr+MrrOxsv2av8CtXCWjl6u0ltB0e+Dwp+eCsInBY2\npPXaGDYvd5X6+9vFEYXDq2zRssgQeiir/sj6fazNF0Tcqf9LWALf05mRAoGABamJ\nuIk5i/xGSBq/ROjv0RSny5rpU11wFcxyJXjaMPClEBi5oBqUIa/itSEVLP7knVwW\nknUzmsfqfy5RB8qvfwW332S5REOUbyzTMHlx/CSFOAweuxEhNUsfDPegNICwHg+E\n3riBnYxk+Z/7yL44OJwqAje6NPE4jWDyKUMdfWECgYEA4w5XnCh1hxx/yDz4BBgX\nNh3tvdAlHx2WSbLR0ykAkykFt/hiVpsBqlUdoeQgKcy6I2ztFLSmJUFCcYjR6xZP\n33nn5MRd0HowOVJnUn45hi+Q7uBVPC/vmgKLt8fV9lKG149ZTrKZJRbKVYGtUEFW\nPrpQ9x0kzM5mfAU2iP0RQQs=\n-----END PRIVATE KEY-----\n",
-  "client_email": "acceptancecheck@searchy-428415.iam.gserviceaccount.com",
-  "client_id": "102839480730277219815",
-  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-  "token_uri": "https://oauth2.googleapis.com/token",
-  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/acceptancecheck%40searchy-428415.iam.gserviceaccount.com",
-  "universe_domain": "googleapis.com"
+    # ... your full service account dict here (keep it the same)
 }
 
-# Roblox API base URLs
 ROBLOX_USERS_API = "https://users.roblox.com/v1"
 ROBLOX_FRIENDS_API = "https://friends.roblox.com/v1"
 ROBLOX_BADGES_API = "https://badges.roblox.com/v1"
 ROBLOX_GROUPS_API = "https://groups.roblox.com/v2"
 
-# Setup Discord bot
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
-# Setup Google Sheets client
 def get_blacklisted_ids():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     creds = ServiceAccountCredentials.from_json_keyfile_dict(SERVICE_ACCOUNT_INFO, scope)
     client = gspread.authorize(creds)
-    print("blacklisted checked")
     sheet = client.open_by_key(SPREADSHEET_ID).get_worksheet(1)  # second sheet (index 1)
     blacklist_column = sheet.col_values(4)  # Column D
-    return set(filter(str.isdigit, blacklist_column))  # Only numeric IDs
-    
+    return set(filter(str.isdigit, blacklist_column))
 
 def safe_get(url, max_retries=3, backoff_factor=1):
     for attempt in range(max_retries):
@@ -77,13 +59,24 @@ def parse_roblox_date(date_str):
 def get_user_info(user_id):
     url = f"{ROBLOX_USERS_API}/users/{user_id}"
     resp = safe_get(url)
-    print("info gotten")
     return resp.json() if resp else None
+
+def get_user_id_by_username(username) -> Optional[int]:
+    url = f"https://users.roblox.com/v1/usernames/users"
+    payload = {"usernames": [username], "excludeBannedUsers": True}
+    try:
+        resp = requests.post(url, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+        if "data" in data and len(data["data"]) > 0:
+            return data["data"][0]["id"]
+    except Exception:
+        pass
+    return None
 
 def get_friends_count(user_id):
     url = f"{ROBLOX_FRIENDS_API}/users/{user_id}/friends/count"
     resp = safe_get(url)
-    print("Friends Gotten")
     return resp.json().get("count", 0) if resp else 0
 
 def get_badges_count(user_id):
@@ -104,71 +97,64 @@ def get_badges_count(user_id):
             break
     return len(badges)
 
+def get_badge_pages(user_id):
+    badge_count = get_badges_count(user_id)
+    pages = badge_count // 30  # 30 badges per page
+    return pages, badge_count
+
 def get_groups_count(user_id):
     url = f"{ROBLOX_GROUPS_API}/users/{user_id}/groups/roles"
     resp = safe_get(url)
     return len(resp.json().get("data", [])) if resp else 0
 
+def check_account_age(user_created_date_str):
+    created_date = parse_roblox_date(user_created_date_str)
+    return (datetime.utcnow() - created_date).days
+
 def get_xtracker_evidence(user_id):
-    # TODO: Replace this stub with real XTracker data retrieval
-    # Return None if no evidence
-    # Return dict with keys: date, proof_type, linking_user, tracker_emoji, linked_user
+    # Example endpoint - replace with your actual XTracker API if different
+    url = f"https://api.xtracker.io/v1/evidence/{user_id}"
+    resp = safe_get(url)
+    if not resp:
+        return None
 
-    # Example hardcoded data for demonstration:
-    if str(user_id) == "123456789":
-        return {
-            "date": "2024-07-13T00:00:00Z",
-            "proof_type": "Alt Proof",
-            "linking_user": "lightasrm",
-            "tracker_emoji": ":trackerLink:",
-            "linked_user": "southsouljah"
-        }
-    return None
+    data = resp.json()
+    # Assume data['evidence'] is a list, pick the last item if exists
+    evidence_list = data.get("evidence", [])
+    if not evidence_list:
+        return None
 
-@tree.command(name="checkacceptance", description="Check acceptance criteria of a Roblox user by ID or username")
-@app_commands.describe(user="Roblox user ID or username")
-async def checkacceptance(interaction: discord.Interaction, user: str):
-    await interaction.response.defer()  # defer reply for long operations
+    last_evidence = evidence_list[-1]
+    # Example fields, adjust to your actual API response
+    date_str = last_evidence.get("date")  # e.g. "2024-07-13T00:00:00Z"
+    proof_type = last_evidence.get("type")  # e.g. "Alt Proof"
+    linked_user = last_evidence.get("linkedUser")  # e.g. "lightasrm"
+    tracker_linked_user = last_evidence.get("trackerLinkedUser")  # e.g. "southsouljah"
 
-    # Determine if input is a user ID (digits) or username (string)
-    user_id = None
-    if user.isdigit():
-        user_id = int(user)
-    else:
-        # Lookup by username to get user ID
-        url = f"{ROBLOX_USERS_API}/users/get-by-username?username={user}"
-        resp = safe_get(url)
-        if not resp or resp.status_code != 200:
-            await interaction.followup.send(f"User `{user}` not found.")
-            return
-        user_id = resp.json().get("Id")
-        if not user_id:
-            await interaction.followup.send(f"User `{user}` not found.")
-            return
+    # Format date nicely
+    try:
+        dt = datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%SZ")
+        date_formatted = dt.strftime("%m/%d/%Y %I:%M:%S %p")
+    except Exception:
+        date_formatted = date_str
 
-    # Blacklist check
-    blacklisted_ids = get_blacklisted_ids()
-    is_blacklisted = str(user_id) in blacklisted_ids
+    return f"Yes, last evidence on {date_formatted} for {proof_type} | Linking {linked_user} :trackerLink: {tracker_linked_user}"
 
+# Then, inside check_user_acceptance(), after the other checks, add:
+
+def check_user_acceptance(user_id):
     user_info = get_user_info(user_id)
     if not user_info:
-        await interaction.followup.send(f"Failed to fetch data for user ID `{user_id}`.")
-        return
+        return f"❌ Could not fetch user info for ID {user_id}."
 
-    # Account age calculation
-    created_str = user_info.get("created")
-    created_date = parse_roblox_date(created_str) if created_str else None
-    account_age_days = (datetime.utcnow() - created_date).days if created_date else 0
+    blacklist = get_blacklisted_ids()
+    is_blacklisted = str(user_id) in blacklist
 
+    created_date_str = user_info.get("created")
+    account_age_days = check_account_age(created_date_str) if created_date_str else 0
     friends = get_friends_count(user_id)
-    badges = get_badges_count(user_id)
+    badge_pages, badges = get_badge_pages(user_id)
     groups = get_groups_count(user_id)
-
-    # Acceptance criteria thresholds
-    required_account_age = 90
-    required_friends = 10
-    required_badges = 10
-    required_groups = 2
 
     result_lines = [
         f"👤 **Username:** {user_info.get('name')}",
@@ -176,31 +162,79 @@ async def checkacceptance(interaction: discord.Interaction, user: str):
         "",
         f"🚫 Blacklisted: {'Yes' if is_blacklisted else 'No'}",
         "",
-        f"📆 Account Age: {account_age_days} days (Required: {required_account_age}) → {'✅' if account_age_days >= required_account_age else '❌'}",
-        f"🤝 Friends Count: {friends} (Required: {required_friends}) → {'✅' if friends >= required_friends else '❌'}",
-        f"🏅 Badges Count: {badges} (Required: {required_badges}) → {'✅' if badges >= required_badges else '❌'}",
-        f"👥 Groups Count: {groups} (Required: {required_groups}) → {'✅' if groups >= required_groups else '❌'}",
+        f"📆 Account Age: {account_age_days} days (Required: 90) → {'✅' if account_age_days >= 90 else '❌'}",
+        f"🤝 Friends Count: {friends} (Required: 10) → {'✅' if friends >= 10 else '❌'}",
+        f"🏅 Badges Count: {badges} (Required: 10) → {'✅' if badges >= 10 else '❌'}",
+        f"📄 Badge Pages (30 per page): {badge_pages}",
+        f"👥 Groups Count: {groups} (Required: 2) → {'✅' if groups >= 2 else '❌'}",
     ]
 
-    # Add XTracker evidence info
-    evidence = get_xtracker_evidence(user_id)
-    if evidence:
-        dt = datetime.strptime(evidence["date"], "%Y-%m-%dT%H:%M:%SZ")
-        formatted_date = dt.strftime("%m/%d/%Y %I:%M:%S %p")
+    # Add XTracker evidence check:
+    evidence_text = get_xtracker_evidence(user_id)
+    if evidence_text:
+        result_lines.append("\nXTracker Evidence?\n" + evidence_text)
 
-        xtracker_line = (
-            f"XTracker Evidence?\n"
-            f"Yes, last evidence on {formatted_date} for {evidence['proof_type']} | "
-            f"Linking {evidence['linking_user']} {evidence['tracker_emoji']} {evidence['linked_user']}"
-        )
+    if is_blacklisted:
+        result_lines.append("\n⚠️ User is **blacklisted** and may be restricted.")
+    elif all([
+        account_age_days >= 90,
+        friends >= 10,
+        badges >= 10,
+        groups >= 2,
+    ]):
+        result_lines.append("\n✅ User **meets** the acceptance criteria.")
     else:
-        xtracker_line = "XTracker Evidence?\nNo"
+        result_lines.append("\n❌ User **does NOT meet** the acceptance criteria.")
 
-    result_lines.append("")
-    result_lines.append(xtracker_line)
+    return "\n".join(result_lines)
 
-    result_text = "\n".join(result_lines)
+@tree.command(name="check", description="Check multiple Roblox users by username or ID (space separated)")
+@app_commands.describe(users="Usernames or IDs separated by spaces")
+async def check_user(interaction: discord.Interaction, users: str):
+    await interaction.response.defer()
 
-    await interaction.followup.send(f"```{result_text}```")
+    user_inputs = users.split()
+    results = []
+
+    for user_input in user_inputs:
+        user_id = None
+        if user_input.isdigit():
+            user_id = int(user_input)
+        else:
+            user_id = get_user_id_by_username(user_input)
+            if user_id is None:
+                results.append(f"❌ Could not find user ID for username `{user_input}`.")
+                continue
+
+        result = check_user_acceptance(user_id)
+        results.append(result)
+
+    final_message = "\n\n".join(results)
+
+    # Discord message max length is 2000, so split if needed
+    if len(final_message) > 1900:
+        chunks = [final_message[i:i+1900] for i in range(0, len(final_message), 1900)]
+        for chunk in chunks:
+            await interaction.followup.send(chunk)
+    else:
+        await interaction.followup.send(final_message)
+
+@bot.event
+async def on_ready():
+    print(f"Logged in as {bot.user}!")
+
+from flask import Flask
+import threading
+
+app = Flask("")
+
+@app.route("/")
+def home():
+    return "I'm alive!"
+
+def run_flask():
+    app.run(host="0.0.0.0", port=8080)
+
+threading.Thread(target=run_flask).start()
 
 bot.run(TOKEN)
