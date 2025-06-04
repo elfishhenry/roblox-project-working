@@ -4,15 +4,13 @@ from discord import app_commands
 import json
 import requests
 import time
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from requests.exceptions import ConnectionError, HTTPError
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import os
 from dotenv import load_dotenv
 from typing import Optional
-from datetime import datetime, timezone, timedelta
-
 
 load_dotenv()
 
@@ -47,7 +45,7 @@ def get_blacklisted_ids():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     creds = ServiceAccountCredentials.from_json_keyfile_dict(SERVICE_ACCOUNT_INFO, scope)
     client = gspread.authorize(creds)
-    sheet = client.open_by_key(SPREADSHEET_ID).get_worksheet(1)  # second sheet (index 1)
+    sheet = client.open_by_key(SPREADSHEET_ID).get_worksheet(1)
     blacklist_column = sheet.col_values(4)  # Column D
     return set(filter(str.isdigit, blacklist_column))
 
@@ -69,15 +67,11 @@ def parse_roblox_date(date_str):
         return datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%SZ")
 
 def get_current_date_discord_timestamp():
-# SAST is UTC+2
     SAST = timezone(timedelta(hours=2))
     now_sast = datetime.now(SAST)
-# Convert to UTC timestamp (Discord timestamps are UTC-based)
     now_utc = now_sast.astimezone(timezone.utc)
     unix_timestamp = int(now_utc.timestamp())
-# Use format 'F' for full date/time, you can change to 'f', 'R', etc.
     return f"<t:{unix_timestamp}:F>"
-
 
 def get_user_info(user_id):
     url = f"{ROBLOX_USERS_API}/users/{user_id}"
@@ -85,7 +79,7 @@ def get_user_info(user_id):
     return resp.json() if resp else None
 
 def get_user_id_by_username(username) -> Optional[int]:
-    url = f"https://users.roblox.com/v1/usernames/users"
+    url = "https://users.roblox.com/v1/usernames/users"
     payload = {"usernames": [username], "excludeBannedUsers": True}
     try:
         resp = requests.post(url, json=payload)
@@ -122,7 +116,7 @@ def get_badges_count(user_id):
 
 def get_badge_pages(user_id):
     badge_count = get_badges_count(user_id)
-    pages = badge_count // 30  # 30 badges per page
+    pages = badge_count // 30
     return pages, badge_count
 
 def get_groups_count(user_id):
@@ -135,7 +129,6 @@ def check_account_age(user_created_date_str):
     return (datetime.utcnow() - created_date).days
 
 def get_xtracker_evidence(user_id):
-    # Example endpoint - replace with your actual XTracker API if different
     url = f"https://api.xtracker.io/v1/evidence/{user_id}"
     resp = safe_get(url)
     if not resp:
@@ -147,12 +140,11 @@ def get_xtracker_evidence(user_id):
         return None
 
     last_evidence = evidence_list[-1]
-    date_str = last_evidence.get("date")  # e.g. "2024-07-13T00:00:00Z"
-    proof_type = last_evidence.get("type")  # e.g. "Alt Proof"
-    linked_user = last_evidence.get("linkedUser")  # e.g. "lightasrm"
-    tracker_linked_user = last_evidence.get("trackerLinkedUser")  # e.g. "southsouljah"
+    date_str = last_evidence.get("date")
+    proof_type = last_evidence.get("type")
+    linked_user = last_evidence.get("linkedUser")
+    tracker_linked_user = last_evidence.get("trackerLinkedUser")
 
-    # Format date as MM/DD/YYYY 12:00:00 AM
     try:
         dt = datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%SZ")
         date_formatted = dt.strftime("%m/%d/%Y %I:%M:%S %p")
@@ -160,7 +152,6 @@ def get_xtracker_evidence(user_id):
         date_formatted = date_str
 
     return f"Yes, last evidence on {date_formatted} for {proof_type} | Linking {linked_user} :trackerLink: {tracker_linked_user}"
-
 
 def check_user_acceptance(user_id):
     user_info = get_user_info(user_id)
@@ -189,17 +180,14 @@ def check_user_acceptance(user_id):
         f"👥 Groups Count: {groups} (Required: 2) → {'✅' if groups >= 2 else '❌'}",
     ]
 
-    # Add XTracker evidence check:
     evidence_text = get_xtracker_evidence(user_id)
     if evidence_text:
         result_lines.append("\nXTracker Evidence?\n" + evidence_text)
     else:
         result_lines.append("\nXTracker Evidence?\nNo evidence found.")
 
-    # Add current date/time in SAST
     current_date = get_current_date_discord_timestamp()
     result_lines.append(f"\nCurrent date: {current_date}")
-
 
     if is_blacklisted:
         result_lines.append("\n⚠️ User is **blacklisted** and may be restricted.")
@@ -215,62 +203,30 @@ def check_user_acceptance(user_id):
 
     return "\n".join(result_lines)
 
-
 @tree.command(name="check", description="Check multiple Roblox users by username or ID (space separated)")
 @app_commands.describe(users="Usernames or IDs separated by spaces")
 async def check_user(interaction: discord.Interaction, users: str):
     await interaction.response.defer()
-
-    user_inputs = users.split()
+    user_list = users.split()
     results = []
 
-    for user_input in user_inputs:
-        user_id = None
-        if user_input.isdigit():
-            user_id = int(user_input)
+    for u in user_list:
+        if u.isdigit():
+            user_id = int(u)
         else:
-            user_id = get_user_id_by_username(user_input)
-            if user_id is None:
-                results.append(f"❌ Could not find user ID for username `{user_input}`.")
+            user_id = get_user_id_by_username(u)
+            if not user_id:
+                results.append(f"❌ Could not find user `{u}`.")
                 continue
-
         result = check_user_acceptance(user_id)
         results.append(result)
+        results.append("---")
 
-    final_message = "\n\n".join(results)
-
-    # Discord message max length is 2000, so split if needed
-    if len(final_message) > 1900:
-        chunks = [final_message[i:i+1900] for i in range(0, len(final_message), 1900)]
-        for chunk in chunks:
-            await interaction.followup.send(chunk)
-    else:
-        await interaction.followup.send(final_message)
+    await interaction.followup.send("\n\n".join(results), ephemeral=True)
 
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user}!")
-    try:
-        # Clear commands if you want to remove old cached commands
-        bot.tree.clear_commands(guild=None)  # Use guild=your_guild_object for guild commands
-        # Sync commands globally or per guild
-        await bot.tree.sync()
-        print("Slash commands synced successfully.")
-    except Exception as e:
-        print(f"Failed to sync commands: {e}")
-
-from flask import Flask
-import threading
-
-app = Flask("")
-
-@app.route("/")
-def home():
-    return "I'm alive!"
-
-def run_flask():
-    app.run(host="0.0.0.0", port=8080)
-
-threading.Thread(target=run_flask).start()
+    print(f"Logged in as {bot.user} (ID: {bot.user.id})")
+    await tree.sync()
 
 bot.run(TOKEN)
