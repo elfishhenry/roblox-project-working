@@ -205,24 +205,107 @@ async def create_badges_timeline_image(user_id):
     buf.seek(0)
     return buf
 
+def get_badges_with_dates(user_id):
+    badges = []
+    limit = 100
+    cursor = None
+    while True:
+        url = f"{ROBLOX_BADGES_API}/users/{user_id}/badges?limit={limit}"
+        if cursor:
+            url += f"&cursor={cursor}"
+        resp = safe_get(url)
+        if not resp:
+            break
+        data = resp.json()
+        badges.extend(data.get("data", []))
+        cursor = data.get("nextPageCursor")
+        if not cursor:
+            break
+    return badges
+
 @tree.command(name="check", description="Check Roblox user acceptance criteria by ID")
 @app_commands.describe(user_id="Roblox user ID to check")
 async def check_user(interaction: discord.Interaction, user_id: int):
     await interaction.response.defer()
-    result = check_user_acceptance(user_id)
-    await interaction.followup.send(result)
 
-@tree.command(name="badgetimeline", description="Show badge earned timeline graph")
-@app_commands.describe(user_id="Roblox user ID to check")
-async def badge_timeline(interaction: discord.Interaction, user_id: int):
-    await interaction.response.defer()
-    image_buffer = await create_badges_timeline_image(user_id)
-    if not image_buffer:
-        await interaction.followup.send("No badge earned date data available for this user.")
+    user_info = get_user_info(user_id)
+    if not user_info:
+        await interaction.followup.send("❌ Could not fetch user info from Roblox.")
         return
 
-    file = discord.File(fp=image_buffer, filename="badge_timeline.png")
-    await interaction.followup.send(file=file)
+    blacklist = get_blacklisted_ids()
+    is_blacklisted = str(user_id) in blacklist
+
+    created_date_str = user_info.get("created")
+    account_age_days = check_account_age(created_date_str) if created_date_str else 0
+    friends = get_friends_count(user_id)
+    badges = get_badges_with_dates(user_id)
+    badge_pages = math.ceil(len(badges) / 30)
+    groups = get_groups_count(user_id)
+
+    result_lines = [
+        f"👤 **Username:** {user_info.get('name')}",
+        f"🆔 **User ID:** {user_id}",
+        "",
+        f"🚫 Blacklisted: {'Yes' if is_blacklisted else 'No'}",
+        "",
+        f"📆 Account Age: {account_age_days} days (Required: 90) → {'✅' if account_age_days >= 90 else '❌'}",
+        f"🤝 Friends Count: {friends} (Required: 10) → {'✅' if friends >= 10 else '❌'}",
+        f"🏅 Badges: {len(badges)} total ({badge_pages} pages, Required: 10 pages) → {'✅' if badge_pages >= 10 else '❌'}",
+        f"👥 Groups Count: {groups} (Required: 2) → {'✅' if groups >= 2 else '❌'}",
+    ]
+
+    if is_blacklisted:
+        result_lines.append("\n⚠️ User is **blacklisted** and may be restricted.")
+    elif all([
+        account_age_days >= 90,
+        friends >= 10,
+        badge_pages >= 10,
+        groups >= 2,
+    ]):
+        result_lines.append("\n✅ User **meets** the acceptance criteria.")
+    else:
+        result_lines.append("\n❌ User **does NOT meet** the acceptance criteria.")
+
+    text_result = "\n".join(result_lines)
+
+    # If user has badges, generate the graph
+    if badges:
+        # Extract earned dates from badges, parsing them into datetime objects
+        badge_dates = []
+        for badge in badges:
+            earned_str = badge.get("awardedAt")
+            if earned_str:
+                try:
+                    dt = datetime.strptime(earned_str, "%Y-%m-%dT%H:%M:%S.%fZ")
+                except ValueError:
+                    dt = datetime.strptime(earned_str, "%Y-%m-%dT%H:%M:%SZ")
+                badge_dates.append(dt)
+        badge_dates.sort()
+
+        if badge_dates:
+            # Plotting badge earn timeline
+            plt.figure(figsize=(8, 4))
+            plt.plot(badge_dates, range(1, len(badge_dates) + 1), marker='o')
+            plt.title(f"Badge Earn Timeline for {user_info.get('name')}")
+            plt.xlabel("Date Earned")
+            plt.ylabel("Cumulative Badges Earned")
+            plt.grid(True)
+            plt.tight_layout()
+
+            # Save plot to a bytes buffer
+            buf = io.BytesIO()
+            plt.savefig(buf, format='png')
+            plt.close()
+            buf.seek(0)
+
+            # Send the text result + image
+            file = discord.File(fp=buf, filename="badge_timeline.png")
+            await interaction.followup.send(content=text_result, file=file)
+            return
+
+    # If no badges or no dates, just send text
+    await interaction.followup.send(text_result)
 
 @bot.event
 async def on_ready():
