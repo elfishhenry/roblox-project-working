@@ -116,6 +116,69 @@ def check_account_age(user_created_date_str):
     created_date = parse_roblox_date(user_created_date_str)
     return (datetime.utcnow() - created_date).days
 
+import matplotlib.pyplot as plt
+import io
+import discord
+
+def get_badge_dates(user_id):
+    # Fetch all badge data for the user
+    badges = []
+    limit = 100
+    cursor = None
+    while True:
+        url = f"{ROBLOX_BADGES_API}/users/{user_id}/badges?limit={limit}"
+        if cursor:
+            url += f"&cursor={cursor}"
+        resp = safe_get(url)
+        if not resp:
+            break
+        data = resp.json()
+        badges.extend(data.get("data", []))
+        cursor = data.get("nextPageCursor")
+        if not cursor:
+            break
+    # Extract dates
+    date_list = []
+    for badge in badges:
+        awarded_date = badge.get("awardedDate")
+        if awarded_date:
+            date_obj = parse_roblox_date(awarded_date)
+            date_list.append(date_obj.date())
+    return date_list
+
+async def plot_badges_vs_dates(interaction, user_id):
+    date_list = get_badge_dates(user_id)
+    if not date_list:
+        await interaction.followup.send("No badge data available for this user.")
+        return
+
+    # Count badges per date
+    from collections import Counter
+    date_counts = Counter(date_list)
+    dates_sorted = sorted(date_counts)
+    counts = [date_counts[d] for d in dates_sorted]
+
+    # Plot
+    plt.figure(figsize=(10, 5))
+    plt.scatter(dates_sorted, counts, color='blue')
+    plt.plot(dates_sorted, counts, linestyle='dotted', color='gray', alpha=0.5)
+    plt.xlabel("Date")
+    plt.ylabel("Badges Earned")
+    plt.title("Badges Earned Per Date")
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+
+    # Save plot to a BytesIO buffer
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+    plt.close()
+
+    # Send plot as a Discord file
+    file = discord.File(buf, filename="badges_vs_dates.png")
+    await interaction.followup.send("Here is the badge earning graph:", file=file)
+
+
 def check_user_acceptance(user_id):
     user_info = get_user_info(user_id)
     if not user_info:
@@ -162,6 +225,13 @@ async def check_user(interaction: discord.Interaction, user_id: int):
     await interaction.response.defer()
     result = check_user_acceptance(user_id)
     await interaction.followup.send(result)
+
+@tree.command(name="badgegraph", description="Show a graph of badges earned per date")
+@app_commands.describe(user_id="Roblox user ID to graph")
+async def badgegraph(interaction: discord.Interaction, user_id: int):
+    await interaction.response.defer()
+    await plot_badges_vs_dates(interaction, user_id)
+
 
 @bot.event
 async def on_ready():
