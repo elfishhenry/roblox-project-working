@@ -12,6 +12,7 @@ import os
 from dotenv import load_dotenv
 import math
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 import io
 from collections import Counter
 import asyncio
@@ -223,6 +224,25 @@ def get_badges_with_dates(user_id):
             break
     return badges
 
+# Update your existing get_badges_count function to also return badge dates and names
+def get_badges(user_id):
+    badges = []
+    limit = 100
+    cursor = None
+    while True:
+        url = f"{ROBLOX_BADGES_API}/users/{user_id}/badges?limit={limit}"
+        if cursor:
+            url += f"&cursor={cursor}"
+        resp = safe_get(url)
+        if not resp:
+            break
+        data = resp.json()
+        badges.extend(data.get("data", []))
+        cursor = data.get("nextPageCursor")
+        if not cursor:
+            break
+    return badges
+
 @tree.command(name="check", description="Check Roblox user acceptance criteria by ID")
 @app_commands.describe(user_id="Roblox user ID to check")
 async def check_user(interaction: discord.Interaction, user_id: int):
@@ -239,9 +259,11 @@ async def check_user(interaction: discord.Interaction, user_id: int):
     created_date_str = user_info.get("created")
     account_age_days = check_account_age(created_date_str) if created_date_str else 0
     friends = get_friends_count(user_id)
-    badges = get_badges_with_dates(user_id)
-    badge_pages = math.ceil(len(badges) / 30)
+    badges = get_badges(user_id)
     groups = get_groups_count(user_id)
+
+    total_badges = len(badges)
+    badge_pages = math.ceil(total_badges / 30)
 
     result_lines = [
         f"👤 **Username:** {user_info.get('name')}",
@@ -251,7 +273,7 @@ async def check_user(interaction: discord.Interaction, user_id: int):
         "",
         f"📆 Account Age: {account_age_days} days (Required: 90) → {'✅' if account_age_days >= 90 else '❌'}",
         f"🤝 Friends Count: {friends} (Required: 10) → {'✅' if friends >= 10 else '❌'}",
-        f"🏅 Badges: {len(badges)} total ({badge_pages} pages, Required: 10 pages) → {'✅' if badge_pages >= 10 else '❌'}",
+        f"🏅 Badges: {total_badges} total ({badge_pages} pages, Required: 10 pages) → {'✅' if badge_pages >= 10 else '❌'}",
         f"👥 Groups Count: {groups} (Required: 2) → {'✅' if groups >= 2 else '❌'}",
     ]
 
@@ -267,45 +289,51 @@ async def check_user(interaction: discord.Interaction, user_id: int):
     else:
         result_lines.append("\n❌ User **does NOT meet** the acceptance criteria.")
 
-    text_result = "\n".join(result_lines)
-
-    # If user has badges, generate the graph
+    # Prepare badge dates for plotting
     if badges:
-        # Extract earned dates from badges, parsing them into datetime objects
         badge_dates = []
         for badge in badges:
-            earned_str = badge.get("awardedAt")
-            if earned_str:
+            # Some badges might not have an 'awardedAt' field — skip those
+            awarded_at = badge.get("awardedAt")
+            if awarded_at:
                 try:
-                    dt = datetime.strptime(earned_str, "%Y-%m-%dT%H:%M:%S.%fZ")
-                except ValueError:
-                    dt = datetime.strptime(earned_str, "%Y-%m-%dT%H:%M:%SZ")
-                badge_dates.append(dt)
-        badge_dates.sort()
-
+                    date_obj = parse_roblox_date(awarded_at)
+                    badge_dates.append(date_obj)
+                except Exception:
+                    pass
+        
         if badge_dates:
-            # Plotting badge earn timeline
+            badge_dates.sort()
+            counts = list(range(1, len(badge_dates)+1))
+
+            # Plotting
             plt.figure(figsize=(8, 4))
-            plt.plot(badge_dates, range(1, len(badge_dates) + 1), marker='o')
-            plt.title(f"Badge Earn Timeline for {user_info.get('name')}")
-            plt.xlabel("Date Earned")
-            plt.ylabel("Cumulative Badges Earned")
+            plt.plot(badge_dates, counts, marker='o')
+            plt.title(f"Badge Acquisition Over Time for {user_info.get('name')}")
+            plt.xlabel("Date")
+            plt.ylabel("Total Badges Earned")
             plt.grid(True)
+
+            # Format date on x-axis nicely
+            plt.gca().xaxis.set_major_locator(mdates.AutoDateLocator())
+            plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+            plt.xticks(rotation=45)
             plt.tight_layout()
 
-            # Save plot to a bytes buffer
+            # Save to BytesIO buffer
             buf = io.BytesIO()
             plt.savefig(buf, format='png')
-            plt.close()
             buf.seek(0)
+            plt.close()
 
-            # Send the text result + image
-            file = discord.File(fp=buf, filename="badge_timeline.png")
-            await interaction.followup.send(content=text_result, file=file)
+            file = discord.File(buf, filename="badges.png")
+
+            # Send text and image
+            await interaction.followup.send("\n".join(result_lines), file=file)
             return
 
-    # If no badges or no dates, just send text
-    await interaction.followup.send(text_result)
+    # If no badges or no badge dates, just send the text result
+    await interaction.followup.send("\n".join(result_lines))
 
 @bot.event
 async def on_ready():
