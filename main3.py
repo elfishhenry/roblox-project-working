@@ -11,6 +11,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 import os
 from dotenv import load_dotenv
 import math
+import asyncio
 
 load_dotenv()
 
@@ -159,8 +160,14 @@ def check_user_acceptance(user_id):
 @tree.command(name="check", description="Check Roblox user acceptance criteria by ID")
 @app_commands.describe(user_id="Roblox user ID to check")
 async def check_user(interaction: discord.Interaction, user_id: int):
-    await interaction.response.defer()
-    result = check_user_acceptance(user_id)
+    await interaction.response.defer(ephemeral=True)  # ephemeral if you want only user to see
+
+    try:
+        # Run the blocking check_user_acceptance in a thread pool executor
+        result = await asyncio.to_thread(check_user_acceptance, user_id)
+    except Exception as e:
+        result = f"❌ An error occurred while processing the request:\n{e}"
+
     await interaction.followup.send(result)
 
 @bot.event
