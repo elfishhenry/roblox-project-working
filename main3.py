@@ -42,6 +42,7 @@ ROBLOX_GROUPS_API = "https://groups.roblox.com/v2"
 
 # Setup Discord bot
 intents = discord.Intents.default()
+intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
@@ -162,5 +163,19 @@ async def check_user(interaction: discord.Interaction, user_id: int):
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}!")
+
+from flask import Flask
+import threading
+
+app = Flask("")
+
+@app.route("/")
+def home():
+    return "I'm alive!"
+
+def run_flask():
+    app.run(host="0.0.0.0", port=8080)
+
+threading.Thread(target=run_flask).start()
 
 bot.run(TOKEN)
