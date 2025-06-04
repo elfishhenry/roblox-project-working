@@ -160,7 +160,7 @@ def check_user_acceptance(user_id):
 @tree.command(name="check", description="Check Roblox user acceptance criteria by ID")
 @app_commands.describe(user_id="Roblox user ID to check")
 async def check_user(interaction: discord.Interaction, user_id: int):
-    await interaction.response.defer(ephemeral=True)  # ephemeral if you want only user to see
+    await interaction.response.defer(ephemeral=False)  # ephemeral if you want only user to see
 
     try:
         # Run the blocking check_user_acceptance in a thread pool executor
