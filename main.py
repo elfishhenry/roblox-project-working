@@ -134,16 +134,22 @@ def check_account_age(user_created_date_str):
     return (datetime.utcnow() - created_date).days
 
 def check_xtracker_report(user_id):
-    """Check if user has any cheat reports on xTracker."""
+    """Fetch xTracker report data with reason and evidence link."""
     headers = {"Authorization": XTRACKER_API_KEY}
     url = f"https://api.xtracker.xyz/api/registry/user?id={user_id}"
     resp = safe_get(url, headers=headers)
     if not resp:
-        return False  # Could not fetch data, treat as no report
-    
+        return None  # Treat failure as no data
+
     data = resp.json()
-    # The API returns a list of reports. If list is empty, no reports found.
-    return bool(data)
+    if not isinstance(data, list) or len(data) == 0:
+        return None
+
+    # Assuming we only need the most recent report
+    report = data[0]
+    reason = report.get("reason", "Unknown reason")
+    evidence = report.get("evidence", "No evidence link provided")
+    return {"reason": reason, "evidence": evidence}
 
 def check_xtracker_ownership(user_id):
     """Check if user owns cheats on xTracker."""
@@ -193,7 +199,7 @@ def check_user_acceptance(user_id):
     is_blacklisted = str(user_id) in blacklist
 
     # xTracker checks
-    has_xtracker_report = check_xtracker_report(user_id)
+    xtracker_report = check_xtracker_report(user_id)
     owns_cheats = check_xtracker_ownership(user_id)
 
     # Clanware check
@@ -210,7 +216,17 @@ def check_user_acceptance(user_id):
         f"🆔 **User ID:** {user_id}",
         "",
         f"🚫 Blacklisted: {'Yes' if is_blacklisted else 'No'}",
-        f"❌ xTracker Reported for Cheats: {'Yes' if has_xtracker_report else 'No'}",
+    ]
+
+    if xtracker_report:
+        result_lines.append(f"❌ xTracker Reported for Cheats: Yes")
+        result_lines.append(f"   • Reason: {xtracker_report['reason']}")
+        result_lines.append(f"   • Evidence: {xtracker_report['evidence']}")
+    else:
+        result_lines.append("✅ xTracker Reported for Cheats: No")
+
+        result_lines.append(f"❌ Owns Cheats (xTracker): {'Yes' if owns_cheats else 'No'}")
+        result_lines.append(f"❌ Clanware Flagged: {'Yes' if is_clanware_flagged else 'No'}")   
         f"❌ Owns Cheats (xTracker): {'Yes' if owns_cheats else 'No'}",
         f"❌ Clanware Flagged: {'Yes' if is_clanware_flagged else 'No'}",
         "",
@@ -218,9 +234,8 @@ def check_user_acceptance(user_id):
         f"🤝 Friends Count: {friends} (Required: 10) → {'✅' if friends >= 10 else '❌'}",
         f"🏅 Badges: {badges} total ({badge_pages} pages, Required: 10 pages) → {'✅' if badge_pages >= 10 else '❌'}",
         f"👥 Groups Count: {groups} (Required: 2) → {'✅' if groups >= 2 else '❌'}",
-    ]
 
-    if is_blacklisted or has_xtracker_report or owns_cheats or is_clanware_flagged:
+    if is_blacklisted or xtracker_report or owns_cheats or is_clanware_flagged:
         result_lines.append("\n⚠️ User is **blacklisted or flagged by xTracker/Clanware** and may be restricted.")
     elif all([
         account_age_days >= 90,
