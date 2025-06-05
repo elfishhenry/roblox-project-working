@@ -145,18 +145,6 @@ def check_xtracker_report(user_id):
     # The API returns a list of reports. If list is empty, no reports found.
     return bool(data)
 
-def check_xtracker_report(user_id):
-    """Check if user has any cheat reports on xTracker."""
-    headers = {"Authorization": XTRACKER_API_KEY}
-    url = f"https://api.xtracker.xyz/api/registry/user?id={user_id}"
-    resp = safe_get(url, headers=headers)
-    if not resp:
-        return False  # Could not fetch data, treat as no report
-    
-    data = resp.json()
-    # The API returns a list of reports. If list is empty, no reports found.
-    return bool(data)
-
 def check_xtracker_ownership(user_id):
     """Check if user owns cheats on xTracker."""
     headers = {"Authorization": XTRACKER_API_KEY}
@@ -168,17 +156,6 @@ def check_xtracker_ownership(user_id):
     data = resp.json()
     return bool(data)
 
-
-def check_xtracker_ownership(user_id):
-    """Check if user owns cheats on xTracker."""
-    headers = {"Authorization": XTRACKER_API_KEY}
-    url = f"https://api.xtracker.xyz/api/ownership/user?id={user_id}"
-    resp = safe_get(url, headers=headers)
-    if not resp:
-        return False  # Could not fetch data, treat as no cheats owned
-    
-    data = resp.json()
-    return bool(data)
 
 
 def get_badge_dates(user_id):
@@ -267,6 +244,7 @@ async def check_user(interaction: discord.Interaction, user_id: int):
 
 @bot.event
 async def on_ready():
+    await tree.sync()  # Sync commands with Discord
     print(f"Logged in as {bot.user}!")
 
 from flask import Flask
