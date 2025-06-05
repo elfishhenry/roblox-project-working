@@ -21,7 +21,7 @@ CLANWARE_API_KEY = os.getenv("CLANWARE_API_KEY")
 
 
 # New Spreadsheet ID from your provided Google Sheets link
-SPREADSHEET_ID = "1r44AVDsu8qQ74MUaPSZIDGIHDo6GgF_qpUaMAC5OxXs"
+SPREADSHEET_ID = "1C-Jd9G7XQVDhiKfJC0PyFMPr5tqXURrKY5KH9Q_1F6s"
 
 # Your Google Service Account JSON credentials as a dict (paste your JSON here)
 SERVICE_ACCOUNT_INFO = {
