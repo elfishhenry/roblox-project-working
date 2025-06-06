@@ -171,7 +171,7 @@ def plot_badge_history(date_list, username):
     for d in date_list:
         if last_date != d:
             dates.append(d)
-            counts.append(count + 1)
+            counts.append(count + 1)    
             last_date = d
         else:
             counts[-1] += 1
@@ -205,7 +205,8 @@ def check_clanware_report(user_id: int) -> tuple[bool, bool | str]:
     # Ensure CLANWARE_API_KEY is just the key, not "Bearer <key>"
     headers = {
         'Authorization': f'Bearer {CLANWARE_API_KEY}',
-        'Accept': 'application/json'
+        'Accept': 'application/json',
+        'User-Agent': 'RobloxUserCheckBot/1.0 (Contact: YourDiscord#Tag or Email)' # Replace with your bot's info
     }
     # Using the base URL from test.py context, assuming /users/{user_id} is the correct path
     # Adjust if the exact endpoint for checking a user differs for api.clanware.org
@@ -240,10 +241,135 @@ def check_clanware_report(user_id: int) -> tuple[bool, bool | str]:
         print(f"Unexpected error processing Clanware response for user {user_id}: {e}")
         return False, "An unexpected error occurred with the Clanware check. Please check manually."
 
-def get_groups_count(user_id):
-    url = f"{ROBLOX_GROUPS_API}/users/{user_id}/groups/roles"
-    resp = safe_get(url)
-    return len(resp.json().get("data", [])) if resp else 0
+# Add this function or modify your existing group fetching logic
+
+def get_group_roles_data(user_id: int):
+    """Fetches all group and role information for a user from Roblox API."""
+    all_group_roles = []
+    cursor = None
+    limit = 100 # Roblox API default limit for this endpoint is often 10, max is 100
+
+    while True:
+        url = f"{ROBLOX_GROUPS_API}/users/{user_id}/groups/roles?limit={limit}&sortOrder=Asc"
+        if cursor:
+            url += f"&cursor={cursor}"
+        
+        resp = safe_get(url)
+        if not resp:
+            # If the first call fails, return None. If a subsequent call fails, return what's been collected.
+            return None if not all_group_roles else all_group_roles
+        
+        try:
+            data = resp.json()
+            current_page_data = data.get("data", [])
+            all_group_roles.extend(current_page_data)
+            
+            cursor = data.get("nextPageCursor")
+            if not cursor: # No more pages
+                break
+        except requests.exceptions.JSONDecodeError:
+            print(f"JSONDecodeError fetching group roles for {user_id} from {url}: {resp.text[:200]}")
+            return None if not all_group_roles else all_group_roles # Similar error handling
+    return all_group_roles
+
+def get_all_rank_values_for_group(group_id: int) -> list[int] | None:
+    """Fetches all unique rank values for a specific group."""
+    all_ranks = set() # Use a set to store unique rank values
+    cursor = None
+    limit = 100 
+    
+    print(f"Fetching all roles for group ID: {group_id} to determine rank structure.")
+    while True:
+        # Using v2 endpoint which is paginated
+        url = f"{ROBLOX_GROUPS_API}/groups/{group_id}/roles?limit={limit}&sortOrder=Asc"
+        if cursor:
+            url += f"&cursor={cursor}"
+        
+        resp = safe_get(url)
+        if not resp:
+            print(f"Failed to fetch roles for group {group_id}. Returning None for rank structure.")
+            return None # Critical failure to get any role data for this group
+        
+        try:
+            data = resp.json()
+            roles_data = data.get("data", [])
+            for role in roles_data:
+                if 'rank' in role:
+                    all_ranks.add(role['rank']) # Add rank to set
+            
+            cursor = data.get("nextPageCursor")
+            if not cursor: # No more pages
+                break
+        except requests.exceptions.JSONDecodeError:
+            print(f"JSONDecodeError fetching roles for group {group_id} from {url}: {resp.text[:200]}")
+            return None # Critical failure
+            
+    if not all_ranks: # Should not happen if group exists and has roles, but good to check
+        print(f"No ranks found for group {group_id} after fetching roles.")
+        return [] # Return empty list if no ranks were found (e.g., group with no roles?)
+        
+    return sorted(list(all_ranks)) # Return a sorted list of unique rank values
+
+def get_formatted_group_details(user_id: int) -> tuple[bool, bool, str, str, int]:
+    """
+    Fetches group data, checks if user's rank > 1 in all, and formats details for display.
+    Returns: 
+        - api_call_successful (bool)
+        - all_ranks_above_one (bool)
+        - rank_check_message (str): Message for the main page about rank criteria.
+        - detailed_group_string_page2 (str): Formatted string for the group details page.
+        - groups_count (int)
+    """
+    group_roles_list = get_group_roles_data(user_id)
+
+    if group_roles_list is None: # API call failed
+        return False, False, "Could not fetch group details due to an API error."
+    
+    if not group_roles_list:
+        return True, True, "User is not in any groups."
+
+    groups_count = len(group_roles_list)
+    all_ranks_ok = True
+    offending_groups_for_rank_check = []
+    detailed_group_lines_for_page2 = []
+
+    for group_info_item in group_roles_list:
+        group_data = group_info_item.get("group", {})
+        role_data = group_info_item.get("role", {})
+
+        group_id = group_data.get("id")
+        group_name = group_data.get("name", "Unknown Group")
+        group_member_count = group_data.get("memberCount", "N/A")
+        user_rank_in_group = role_data.get("rank", 0)
+        group_link = f"https://www.roblox.com/groups/{group_id}" if group_id else "N/A"
+
+        detailed_group_lines_for_page2.append(
+            f"- **{group_name}** ([Link]({group_link}))\n"
+            f"  - Members: {group_member_count}, Your Rank ID: {user_rank_in_group}"
+        )
+
+        if not (user_rank_in_group > 1):
+            all_ranks_ok = False
+            offending_groups_for_rank_check.append(f"{group_name} (Rank: {user_rank_in_group})")
+
+    # Message for Page 1 (main check)
+    # rank_criteria_met_page1_msg is no longer needed for page 1 display of this specific line
+
+    # Build Page 2 content
+    page2_content_parts = ["**Group Membership & Ranks:**\n"]
+    if detailed_group_lines_for_page2:
+        page2_content_parts.extend(detailed_group_lines_for_page2)
+    else:
+        page2_content_parts.append("No specific group details to display.")
+
+    page2_content_parts.append(f"\n\n**Overall Group Rank Status:**")
+    page2_content_parts.append(f"All Group Ranks > 1: {'Yes' if all_ranks_ok else 'No'}")
+    if not all_ranks_ok and offending_groups_for_rank_check:
+        # Ensure this list is also formatted nicely if it gets long
+        offending_groups_str = "\n- ".join(offending_groups_for_rank_check)
+        page2_content_parts.append(f"Groups not meeting rank > 1:\n- {offending_groups_str}")
+    
+    return True, all_ranks_ok, "\n".join(page2_content_parts)
 
 def check_account_age(user_created_date_str):
     created_date = parse_roblox_date(user_created_date_str)
@@ -281,7 +407,7 @@ def get_badge_dates(user_id):
     # - total_badge_metadata_count: Integer count of badges found.
 
     all_badge_metadata = []
-    limit = 100
+    limit = 100 # Changed to an allowed value, max is 100
     cursor = None
     initial_metadata_call_failed = False
 
@@ -394,10 +520,10 @@ def get_badge_dates(user_id):
 def check_user_acceptance(user_id, generate_graph=False): # Added generate_graph flag
     user_info = get_user_info(user_id)
     if not user_info:
-        return "❌ Could not fetch user info from Roblox.", None # Return tuple
+        return "❌ Could not fetch user info from Roblox.", None, "Could not fetch user info.", "Unknown User" # page1, graph, page2_group, username
 
     username = user_info.get('name', str(user_id)) # Get username for graph title
-
+    
     # Fetch badge data once for both criteria and graph
     badge_dates_list, total_badges_found = get_badge_dates(user_id)
     badge_pages = math.ceil(total_badges_found / 30)
@@ -412,11 +538,15 @@ def check_user_acceptance(user_id, generate_graph=False): # Added generate_graph
     # Clanware check
     clanware_api_success, clanware_result = check_clanware_report(user_id)
 
+    # Group checks using the new helper
+    # Fetch group count separately now as get_formatted_group_details no longer returns it
+    group_roles_list_for_count = get_group_roles_data(user_id) # Call once for count
+    groups_count = len(group_roles_list_for_count) if group_roles_list_for_count is not None else 0
+    group_api_success, all_ranks_ok_for_criteria, group_details_page2 = get_formatted_group_details(user_id)
+
     created_date_str = user_info.get("created")
     account_age_days = check_account_age(created_date_str) if created_date_str else 0
     friends = get_friends_count(user_id)
-    groups = get_groups_count(user_id)
-    # badges variable is now total_badges_found
 
     result_lines = [
         f"👤 **Username:** {user_info.get('name')}",
@@ -436,8 +566,10 @@ def check_user_acceptance(user_id, generate_graph=False): # Added generate_graph
         f"📆 Account Age: {account_age_days} days (Required: 90) → {'✅' if account_age_days >= 90 else '❌'}",
         f"🤝 Friends Count: {friends} (Required: 10) → {'✅' if friends >= 10 else '❌'}",
         f"🏅 Badges: {total_badges_found} total ({badge_pages} pages, Required: 10 pages) → {'✅' if badge_pages >= 10 else '❌'}",
-        f"👥 Groups Count: {groups} (Required: 2) → {'✅' if groups >= 2 else '❌'}",
-    ])
+        f"👥 Groups Count: {groups_count} (Required: 2) → {'✅' if groups_count >= 2 else '❌'}",
+    ]) # Removed the "All Group Ranks > 1" line from page 1
+    if not group_api_success: # Still note if the API call for groups failed on page 1
+        result_lines.append(f"⚠️ Could not fetch group data for detailed checks (API error).")
 
     # Determine overall status, considering Clanware API success
     is_negatively_flagged_by_clanware = clanware_api_success and clanware_result
@@ -447,93 +579,269 @@ def check_user_acceptance(user_id, generate_graph=False): # Added generate_graph
         account_age_days >= 90,
         friends >= 10,
         badge_pages >= 10,
-        groups >= 2,
+        groups_count >= 2,
+        # The 'all_ranks_ok_for_criteria' is now informational for page 2, not a strict pass/fail for page 1's overall status.
     ]):
         result_lines.append("\n✅ User **meets** the acceptance criteria.")
     else:
         result_lines.append("\n❌ User **does NOT meet** the acceptance criteria.")
 
-    text_result = "\n".join(result_lines)
+    text_result_page1 = "\n".join(result_lines)
     graph_buffer = None
 
     if generate_graph:
         if badge_dates_list is None: # Critical API error
-            text_result += "\n\n⚠️ Failed to retrieve badge data for graph generation (API error)."
+            text_result_page1 += "\n\n⚠️ Failed to retrieve badge data for graph generation (API error)."
         elif not badge_dates_list: # No award dates found/parsed, even if badges exist
-            text_result += "\n\nℹ️ No badge award dates found to generate a graph."
+            text_result_page1 += "\n\nℹ️ No badge award dates found to generate a graph."
         else:
             graph_buffer = plot_badge_history(badge_dates_list, username)
             if not graph_buffer:
-                text_result += "\n\n⚠️ Could not generate badge graph."
+                text_result_page1 += "\n\n⚠️ Could not generate badge graph."
 
-    return text_result, graph_buffer
+    return text_result_page1, graph_buffer, group_details_page2, username
 
-@tree.command(name="check", description="Check Roblox user acceptance criteria by ID")
-@app_commands.describe(identifier="Roblox user ID or Username to check")
-async def check_user(interaction: discord.Interaction, identifier: str):
+class UserCheckView(discord.ui.View):
+    def __init__(self, original_interaction: discord.Interaction, user_id: int, username: str, 
+                 page1_embed_desc: str, page2_group_details_desc: str, 
+                 graph_bytesio_buffer: io.BytesIO | None):
+        super().__init__(timeout=180.0) # View times out after 3 minutes
+        self.original_interaction = original_interaction # Interaction from the slash command
+        self.user_id = user_id
+        self.username = username # Needed for graph filename if re-attaching
+
+        self.page1_embed_desc = page1_embed_desc
+        self.page2_group_details_desc = page2_group_details_desc
+        self.graph_bytesio_buffer = graph_bytesio_buffer # Store the BytesIO object
+
+        self.showing_group_details = False
+        self._update_button()
+
+    def _make_page1_embed(self) -> discord.Embed:
+        desc = self.page1_embed_desc
+        if len(desc) > 4096:
+            desc = desc[:4090] + "\n[...]" # Truncate and add indicator
+        return discord.Embed(
+            title=f"User Check: {self.username} (ID: {self.user_id})", 
+            description=desc, 
+            color=discord.Color.green()
+        )
+
+    def _make_page2_embed(self) -> discord.Embed:
+        desc = self.page2_group_details_desc
+        if len(desc) > 4096:
+            desc = desc[:4090] + "\n[...]" # Truncate and add indicator
+        return discord.Embed(
+            title=f"Group Details: {self.username} (ID: {self.user_id})", 
+            description=desc, 
+            color=discord.Color.blue()
+        )
+
+    def _update_button(self):
+        # Remove previous button if exists to avoid duplicates on re-adding
+        for item in list(self.children): # Iterate over a copy for safe removal
+            if isinstance(item, discord.ui.Button) and item.custom_id == "toggle_user_check_details":
+                self.remove_item(item)
+        
+        button = discord.ui.Button(
+            label="Show Group Details" if not self.showing_group_details else "Show Main Info",
+            style=discord.ButtonStyle.secondary if not self.showing_group_details else discord.ButtonStyle.primary,
+            custom_id="toggle_user_check_details",
+            row=0
+        )
+        button.callback = self.toggle_details_callback
+        self.add_item(button)
+
+    async def toggle_details_callback(self, interaction: discord.Interaction):
+        # This interaction is for the button press
+        await interaction.response.defer() # Acknowledge button press *silently*
+
+        self.showing_group_details = not self.showing_group_details
+        
+        current_embed = self._make_page2_embed() if self.showing_group_details else self._make_page1_embed()
+        
+        self._update_button() # Update button label/style for the next state
+
+        attachments_to_send = []
+        if not self.showing_group_details and self.graph_bytesio_buffer: # If switching to Page 1 and graph exists
+            self.graph_bytesio_buffer.seek(0) # Reset buffer
+            new_graph_file = discord.File(self.graph_bytesio_buffer, filename=f"badge_graph_{self.username}_{self.user_id}.png")
+            attachments_to_send.append(new_graph_file)
+        
+        # Edit the original message sent by the bot
+        await self.original_interaction.edit_original_response(embed=current_embed, view=self, attachments=attachments_to_send)
+
+@tree.command(name="check", description="Check Roblox user acceptance criteria. Supports multiple, comma-separated.")
+@app_commands.describe(identifiers_str="Comma-separated Roblox user IDs or Usernames to check")
+async def check_user(interaction: discord.Interaction, identifiers_str: str):
     loop = asyncio.get_event_loop()
     await interaction.response.defer()
 
-    # Resolve identifier to user_id
-    user_id, error_message = await loop.run_in_executor(None, resolve_roblox_identifier, identifier)
-    if user_id is None:
-        await interaction.followup.send(f"❌ {error_message}")
+    raw_identifiers = [s.strip() for s in identifiers_str.split(',')]
+    identifiers_to_process = [id_str for id_str in raw_identifiers if id_str] # Filter out empty strings
+
+    if not identifiers_to_process:
+        await interaction.followup.send("Please provide at least one user ID or username.")
         return
 
-    # Run the blocking function in an executor
-    text_result, graph_buffer = await loop.run_in_executor(
-        None,  # Uses the default ThreadPoolExecutor
-        check_user_acceptance,  # The function to run
-        user_id,  # Arguments for the function
-        True  # generate_graph=True
-    )
+    MAX_USERS_PER_COMMAND = 10 # Limit to prevent abuse/long processing
+    if len(identifiers_to_process) > MAX_USERS_PER_COMMAND:
+        await interaction.followup.send(f"Please check up to {MAX_USERS_PER_COMMAND} users at a time.")
+        return
 
-    if graph_buffer:
-        file = discord.File(graph_buffer, filename="badge_graph.png")
-        await interaction.followup.send(content=text_result, file=file)
-    else:
-        await interaction.followup.send(text_result)
+    for individual_identifier in identifiers_to_process:
+        # Resolve identifier to user_id
+        user_id, error_message = await loop.run_in_executor(None, resolve_roblox_identifier, individual_identifier)
+        if user_id is None:
+            await interaction.followup.send(f"❌ For '{individual_identifier}': {error_message}")
+            continue
 
-@tree.command(name="badgegraph", description="Show a graph of a Roblox user's badge history by ID or Username")
-@app_commands.describe(identifier="Roblox user ID or Username to graph")
-async def badgegraph(interaction: discord.Interaction, identifier: str):
+        # Run the blocking function in an executor, now returns more info
+        page1_text_content, graph_buffer_bytesio, page2_group_details_text, username_for_graph = await loop.run_in_executor(
+            None,
+            check_user_acceptance,
+            user_id,
+            True  # generate_graph=True
+        )
+
+        # Prepare initial embed (Page 1)
+        page1_embed = discord.Embed(
+            title=f"User Check: {username_for_graph} (ID: {user_id})",
+            description=page1_text_content,
+            color=discord.Color.green()
+        )
+        
+        initial_file_to_send = None
+        if graph_buffer_bytesio:
+            graph_buffer_bytesio.seek(0) # Reset buffer
+            initial_file_to_send = discord.File(graph_buffer_bytesio, filename=f"badge_graph_{username_for_graph}_{user_id}.png")
+
+        # Create the view
+        view = UserCheckView(interaction, user_id, username_for_graph, 
+                             page1_text_content, page2_group_details_text, 
+                             graph_buffer_bytesio) # Pass BytesIO for potential re-use
+
+        # Prepare the arguments for send
+        send_args = {
+            "embed": page1_embed,
+            "view": view
+        }
+        if initial_file_to_send:
+            send_args["file"] = initial_file_to_send
+        # Else, initial_file_to_send is None, and we don't add the 'file' key to send_args
+
+        await interaction.followup.send(**send_args)
+
+        # If there are more identifiers to process, send a thinking message
+        if identifiers_to_process.index(individual_identifier) < len(identifiers_to_process) - 1:
+            await interaction.followup.send(f"Bot is thinking about the next user... ({identifiers_to_process.index(individual_identifier) + 2}/{len(identifiers_to_process)})", ephemeral=True)
+
+@tree.command(name="badgegraph", description="Show badge graphs for users. Supports multiple, comma-separated.")
+@app_commands.describe(identifiers_str="Comma-separated Roblox user IDs or Usernames to graph")
+async def badgegraph(interaction: discord.Interaction, identifiers_str: str):
     loop = asyncio.get_event_loop()
     await interaction.response.defer()
 
-    # Resolve identifier to user_id
-    user_id, error_message = await loop.run_in_executor(None, resolve_roblox_identifier, identifier)
-    if user_id is None:
-        await interaction.followup.send(f"❌ {error_message}")
+    raw_identifiers = [s.strip() for s in identifiers_str.split(',')]
+    identifiers_to_process = [id_str for id_str in raw_identifiers if id_str] # Filter out empty strings
+
+    if not identifiers_to_process:
+        await interaction.followup.send("Please provide at least one user ID or username.")
         return
 
-    # Run blocking functions in an executor
+    MAX_USERS_PER_COMMAND = 5 # Limit to prevent abuse/long processing
+    if len(identifiers_to_process) > MAX_USERS_PER_COMMAND:
+        await interaction.followup.send(f"Please request graphs for up to {MAX_USERS_PER_COMMAND} users at a time.")
+        return
+
+    for individual_identifier in identifiers_to_process:
+        user_id, error_message = await loop.run_in_executor(None, resolve_roblox_identifier, individual_identifier)
+        if user_id is None:
+            await interaction.followup.send(f"❌ For '{individual_identifier}': {error_message}")
+            continue
+
+        user_info = await loop.run_in_executor(None, get_user_info, user_id)
+        if not user_info:
+            await interaction.followup.send(f"❌ Could not fetch user info for '{individual_identifier}' (ID: {user_id}).")
+            continue
+        username = user_info.get("name", str(user_id))
+        
+        badge_dates_list, _ = await loop.run_in_executor(None, get_badge_dates, user_id)
+
+        if badge_dates_list is None:
+            await interaction.followup.send(f"❌ Failed to retrieve badge data for **{username}** ('{individual_identifier}'). API error or restricted access.")
+            continue
+        if not badge_dates_list:
+            await interaction.followup.send(f"❌ No badges with award dates found for **{username}** ('{individual_identifier}').")
+            continue
+
+        buf = await loop.run_in_executor(None, plot_badge_history, badge_dates_list, username)
+        if not buf:
+            await interaction.followup.send(f"❌ Could not generate graph for **{username}** ('{individual_identifier}').")
+            continue
+            
+        file = discord.File(buf, filename=f"badge_graph_{user_id}.png")
+        await interaction.followup.send(content=f"Badge history for **{username}** ('{individual_identifier}'):", file=file)
+
+        # If there are more identifiers to process, send a thinking message
+        if identifiers_to_process.index(individual_identifier) < len(identifiers_to_process) - 1:
+            await interaction.followup.send("Bot is thinking about the next user's graph...", ephemeral=True)
+
+@tree.command(name="grouprankdetails", description="Shows detailed group rank info (CAN TAKE A VERY LONG TIME).")
+@app_commands.describe(identifier="Roblox user ID or Username to check group rank details for")
+async def detailed_group_ranks(interaction: discord.Interaction, identifier: str):
+    loop = asyncio.get_event_loop()
+    await interaction.response.defer(ephemeral=True) # Defer ephemerally as this can be slow
+
+    user_id, error_message = await loop.run_in_executor(None, resolve_roblox_identifier, identifier)
+    if user_id is None:
+        await interaction.followup.send(f"❌ For '{identifier}': {error_message}", ephemeral=True)
+        return
+
     user_info = await loop.run_in_executor(None, get_user_info, user_id)
-    if not user_info:
-        await interaction.followup.send(f"❌ Could not fetch user info for Roblox ID {user_id}. The user may not exist or the Roblox API is unavailable.")
+    username = user_info.get("name", str(user_id)) if user_info else identifier
+
+    await interaction.followup.send(f"⏳ Fetching detailed group rank information for **{username}** (ID: {user_id}). This might take a while...", ephemeral=True)
+
+    # This part will be slow
+    group_roles_list = await loop.run_in_executor(None, get_group_roles_data, user_id)
+
+    if group_roles_list is None:
+        await interaction.edit_original_response(content=f"❌ Could not fetch group list for **{username}**.")
         return
-    username = user_info.get("name", str(user_id))
+    if not group_roles_list:
+        await interaction.edit_original_response(content=f"ℹ️ **{username}** is not in any groups.")
+        return
+
+    detailed_lines = [f"**Detailed Group Rank Information for {username} (ID: {user_id}):**\n"]
+    for group_info_item in group_roles_list:
+        group_data = group_info_item.get("group", {})
+        role_data = group_info_item.get("role", {})
+
+        group_id = group_data.get("id")
+        group_name = group_data.get("name", "Unknown Group")
+        user_rank_in_group = role_data.get("rank", 0)
+        group_link = f"https://www.roblox.com/groups/{group_id}" if group_id else "N/A"
+
+        ranks_below_user_str = "N/A (or API error)"
+        if group_id:
+            # This is the slow part, called for each group
+            all_group_ranks = await loop.run_in_executor(None, get_all_rank_values_for_group, group_id)
+            if all_group_ranks is not None:
+                ranks_below_user_count = sum(1 for r in all_group_ranks if r < user_rank_in_group and r > 0)
+                ranks_below_user_str = str(ranks_below_user_count)
+        
+        detailed_lines.append(
+            f"- **{group_name}** ([Link]({group_link}))\n"
+            f"  - Your Rank ID: {user_rank_in_group}\n"
+            f"  - Ranks Below Yours: {ranks_below_user_str}"
+        )
     
-    badge_dates_list, _ = await loop.run_in_executor(None, get_badge_dates, user_id) # We only need the list of dates here
-
-    # plot_badge_history is CPU-bound (matplotlib) and also involves BytesIO,
-    # so it's good to run in an executor too if it becomes complex or slow.
-    # For now, let's assume it's quick enough after badge_dates is fetched.
-
-    if badge_dates_list is None:
-        # API call failed critically before any badge data could be processed
-        await interaction.followup.send(f"❌ Failed to retrieve badge data for **{username}**. Roblox API might be temporarily unavailable, access could be restricted (e.g., private inventory leading to an error), or another API issue occurred.")
-        return
-    if not badge_dates_list:
-        # API call succeeded (or partially), but no badges with dates found
-        await interaction.followup.send(f"❌ No badges with award dates found for **{username}**. They might have no badges, their badges lack award dates, or their badge inventory is private and returns empty data.")
-        return
-
-    buf = await loop.run_in_executor(None, plot_badge_history, badge_dates_list, username)
-    if not buf:
-        await interaction.followup.send("❌ Could not generate graph.")
-        return
-    file = discord.File(buf, filename="badge_graph.png")
-    await interaction.followup.send(content=f"Badge history for **{username}**:", file=file)
+    final_message = "\n".join(detailed_lines)
+    if len(final_message) > 2000: # Discord message limit
+        final_message = final_message[:1990] + "\n[...Output truncated...]"
+        
+    await interaction.edit_original_response(content=final_message) # Send as a normal followup now
 
 
 
