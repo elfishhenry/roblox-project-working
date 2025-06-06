@@ -463,6 +463,11 @@ def get_badge_dates(user_id):
     print(f"Fetching awarded dates in batches for user {user_id}...")
     for i in range(0, len(badge_ids), AWARDED_DATES_BATCH_SIZE):
         batch_ids = badge_ids[i:i + AWARDED_DATES_BATCH_SIZE]
+
+        # Add a small delay before each batch request to be gentler on the API,
+        # especially for services like roproxy.com that might have stricter rate limits.
+        if i > 0: # Don't sleep before the very first batch
+            time.sleep(1) # Sleep for 1 second between batch requests
         
         # Using requests' params argument with safe_get
         url_base = f"{ROBLOX_BADGES_PROXY_API}/users/{user_id}/badges/awarded-dates"
