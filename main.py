@@ -734,8 +734,8 @@ async def check_user(interaction: discord.Interaction, identifiers_str: str):
 
         # If there are more identifiers to process, send a thinking message
         if identifiers_to_process.index(individual_identifier) < len(identifiers_to_process) - 1:
-            await interaction.followup.send(f"Bot is thinking about the next user... ({identifiers_to_process.index(individual_identifier) + 2}/{len(identifiers_to_process)})", ephemeral=True)
-
+            # Add a small delay to avoid Discord rate limits when processing multiple users
+            await asyncio.sleep(1) # Wait for 1 second before processing the next user
 @tree.command(name="badgegraph", description="Show badge graphs for users. Supports multiple, comma-separated.")
 @app_commands.describe(identifiers_str="Comma-separated Roblox user IDs or Usernames to graph")
 async def badgegraph(interaction: discord.Interaction, identifiers_str: str):
@@ -785,8 +785,8 @@ async def badgegraph(interaction: discord.Interaction, identifiers_str: str):
 
         # If there are more identifiers to process, send a thinking message
         if identifiers_to_process.index(individual_identifier) < len(identifiers_to_process) - 1:
-            await interaction.followup.send("Bot is thinking about the next user's graph...", ephemeral=True)
-
+            # Add a small delay to avoid Discord rate limits when processing multiple users
+            await asyncio.sleep(1) # Wait for 1 second before processing the next user
 @tree.command(name="grouprankdetails", description="Shows detailed group rank info (CAN TAKE A VERY LONG TIME).")
 @app_commands.describe(identifier="Roblox user ID or Username to check group rank details for")
 async def detailed_group_ranks(interaction: discord.Interaction, identifier: str):
