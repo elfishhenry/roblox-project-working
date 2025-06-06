@@ -17,7 +17,8 @@ import matplotlib.pyplot as plt
 import io
 from PIL import Image
 import asyncio # Import asyncio
-
+from flask import Flask
+import threading
 
 load_dotenv()
 
@@ -71,12 +72,17 @@ def get_blacklisted_ids():
     return set(filter(str.isdigit, blacklist_column))  # Only numeric IDs
     
 
-def safe_get(url, params=None, max_retries=3, backoff_factor=1, headers=None): # Added params argument
+def safe_get(url, method="GET", params=None, json_payload=None, max_retries=3, backoff_factor=1, headers=None):
     for attempt in range(max_retries):
         try:
-            # Added timeout and more detailed logging for errors
-            print(f"safe_get: Attempt {attempt + 1} for {url} with params {params}") 
-            resp = requests.get(url, params=params, headers=headers, timeout=10) # Used params
+            print(f"safe_get: Attempt {attempt + 1} for {method} {url} with params {params} and JSON payload {json_payload}")
+            if method.upper() == "POST":
+                resp = requests.post(url, params=params, json=json_payload, headers=headers, timeout=10)
+            elif method.upper() == "GET":
+                resp = requests.get(url, params=params, headers=headers, timeout=10)
+            else:
+                print(f"safe_get: Unsupported method '{method}' for {url}.")
+                return None
             resp.raise_for_status()
             return resp
         except requests.exceptions.Timeout:
@@ -117,6 +123,29 @@ def parse_roblox_date(date_str):
     except ValueError as e:
         print(f"Error parsing date string '{original_date_str}' (processed as '{date_str}'): {e}")
         raise # Re-raise to be handled by the caller
+
+def resolve_roblox_identifier(identifier: str) -> tuple[int | None, str | None]:
+    """
+    Resolves a Roblox identifier (username or ID) to a User ID.
+    Returns: (user_id, error_message). If successful, user_id is int, error_message is None.
+             Otherwise, user_id is None, error_message is a string.
+    """
+    if identifier.isdigit():
+        return int(identifier), None
+    else:
+        # Try to resolve username to ID
+        url = f"{ROBLOX_USERS_API}/usernames/users"
+        json_payload = {"usernames": [identifier], "excludeBannedUsers": False}
+        
+        response = safe_get(url, method="POST", json_payload=json_payload)
+        if response:
+            data = response.json()
+            if data.get("data") and len(data["data"]) > 0 and "id" in data["data"][0]:
+                return data["data"][0]["id"], None
+            else:
+                return None, f"Username '{identifier}' not found or API returned unexpected data."
+        else:
+            return None, f"Error resolving username '{identifier}' using safe_get."
 
 def get_user_info(user_id):
     url = f"{ROBLOX_USERS_API}/users/{user_id}"
@@ -172,30 +201,34 @@ def check_clanware_report(user_id: int) -> tuple[bool, bool | str]:
         print("Warning: CLANWARE_API_KEY is not set. Clanware check will be skipped.")
         return False, "Clanware API key not configured. Check skipped."
 
-    # Reverted to the older Clanware API endpoint
-    headers = {"Authorization": CLANWARE_API_KEY}
-    url = f"https://api.clanware.xyz/user/check?id={user_id}"
-    
+    # Using the API endpoint and authentication method similar to test.py
+    # Ensure CLANWARE_API_KEY is just the key, not "Bearer <key>"
+    headers = {
+        'Authorization': f'Bearer {CLANWARE_API_KEY}',
+        'Accept': 'application/json'
+    }
+    # Using the base URL from test.py context, assuming /users/{user_id} is the correct path
+    # Adjust if the exact endpoint for checking a user differs for api.clanware.org
+    url = f"https://api.clanware.org/api/v1/users/{user_id}"
+
     print(f"Checking Clanware for user ID: {user_id} at {url}")
     response = safe_get(url, headers=headers)
 
     if response is None:
-        # safe_get logs detailed errors (e.g., NameResolutionError leading to ConnectionError)
-        # Also, if the API key is wrong or endpoint changed, safe_get might return None after retries for 401/403/404
         return False, "Could not connect to Clanware API. Please check manually."
 
     try:
         data = response.json()
-        
-        is_flagged = data.get("isFlagged") # Get value, could be None if key is missing
-        
-        if is_flagged is None:
-            print(f"Clanware API response for user {user_id} missing 'isFlagged' field. Response: {data}")
-            return False, "Clanware API response format unexpected (missing 'isFlagged'). Please check manually."
-        
-        if not isinstance(is_flagged, bool):
-            print(f"Clanware API response for user {user_id} 'isFlagged' is not a boolean. Value: {is_flagged}, Type: {type(is_flagged)}. Response: {data}")
-            return False, "Clanware API response format unexpected ('isFlagged' not boolean). Please check manually."
+
+        # Adapting to the response structure seen in test.py (is_exploiter, is_degenerate)
+        # Assuming either being an exploiter or degenerate means they are "flagged"
+        is_exploiter = data.get('is_exploiter', False)
+        is_degenerate = data.get('is_degenerate', False)
+        is_flagged = is_exploiter or is_degenerate
+
+        if not isinstance(is_exploiter, bool) or not isinstance(is_degenerate, bool):
+            print(f"Clanware API response for user {user_id} has unexpected types for 'is_exploiter' or 'is_degenerate'. Response: {data}")
+            return False, "Clanware API response format unexpected (field types). Please check manually."
 
         print(f"Clanware check successful for user ID: {user_id}. Flagged: {is_flagged}")
         return True, is_flagged
@@ -436,10 +469,16 @@ def check_user_acceptance(user_id, generate_graph=False): # Added generate_graph
     return text_result, graph_buffer
 
 @tree.command(name="check", description="Check Roblox user acceptance criteria by ID")
-@app_commands.describe(user_id="Roblox user ID to check")
-async def check_user(interaction: discord.Interaction, user_id: int):
+@app_commands.describe(identifier="Roblox user ID or Username to check")
+async def check_user(interaction: discord.Interaction, identifier: str):
     loop = asyncio.get_event_loop()
     await interaction.response.defer()
+
+    # Resolve identifier to user_id
+    user_id, error_message = await loop.run_in_executor(None, resolve_roblox_identifier, identifier)
+    if user_id is None:
+        await interaction.followup.send(f"❌ {error_message}")
+        return
 
     # Run the blocking function in an executor
     text_result, graph_buffer = await loop.run_in_executor(
@@ -455,11 +494,17 @@ async def check_user(interaction: discord.Interaction, user_id: int):
     else:
         await interaction.followup.send(text_result)
 
-@tree.command(name="badgegraph", description="Show a graph of a Roblox user's badge history by user ID")
-@app_commands.describe(user_id="Roblox user ID to graph")
-async def badgegraph(interaction: discord.Interaction, user_id: int):
+@tree.command(name="badgegraph", description="Show a graph of a Roblox user's badge history by ID or Username")
+@app_commands.describe(identifier="Roblox user ID or Username to graph")
+async def badgegraph(interaction: discord.Interaction, identifier: str):
     loop = asyncio.get_event_loop()
     await interaction.response.defer()
+
+    # Resolve identifier to user_id
+    user_id, error_message = await loop.run_in_executor(None, resolve_roblox_identifier, identifier)
+    if user_id is None:
+        await interaction.followup.send(f"❌ {error_message}")
+        return
 
     # Run blocking functions in an executor
     user_info = await loop.run_in_executor(None, get_user_info, user_id)
@@ -497,8 +542,7 @@ async def on_ready():
     await tree.sync()  # Sync commands with Discord
     print(f"Logged in as {bot.user}!")
 
-from flask import Flask
-import threading
+
 
 app = Flask("")
 
