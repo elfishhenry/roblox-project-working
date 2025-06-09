@@ -607,11 +607,10 @@ def check_user_acceptance(user_id, generate_graph=False): # Added generate_graph
     return text_result_page1, graph_buffer, group_details_page2, username
 
 class UserCheckView(discord.ui.View):
-    def __init__(self, original_interaction: discord.Interaction, user_id: int, username: str, 
+    def __init__(self, user_id: int, username: str,
                  page1_embed_desc: str, page2_group_details_desc: str, 
                  graph_bytesio_buffer: io.BytesIO | None):
         super().__init__(timeout=180.0) # View times out after 3 minutes
-        self.original_interaction = original_interaction # Interaction from the slash command
         self.user_id = user_id
         self.username = username # Needed for graph filename if re-attaching
 
@@ -674,7 +673,7 @@ class UserCheckView(discord.ui.View):
             attachments_to_send.append(new_graph_file)
         
         # Edit the original message sent by the bot
-        await self.original_interaction.edit_original_response(embed=current_embed, view=self, attachments=attachments_to_send)
+        await interaction.message.edit(embed=current_embed, view=self, attachments=attachments_to_send)
 
 @tree.command(name="check", description="Check Roblox user acceptance criteria. Supports multiple, comma-separated.")
 @app_commands.describe(identifiers_str="Comma-separated Roblox user IDs or Usernames to check")
@@ -722,7 +721,7 @@ async def check_user(interaction: discord.Interaction, identifiers_str: str):
             initial_file_to_send = discord.File(graph_buffer_bytesio, filename=f"badge_graph_{username_for_graph}_{user_id}.png")
 
         # Create the view
-        view = UserCheckView(interaction, user_id, username_for_graph, 
+        view = UserCheckView(user_id, username_for_graph,
                              page1_text_content, page2_group_details_text, 
                              graph_buffer_bytesio) # Pass BytesIO for potential re-use
 
