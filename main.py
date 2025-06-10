@@ -631,13 +631,12 @@ class UserCheckView(discord.ui.View):
             color=discord.Color.green()
         )
 
-    def _make_page2_embed(self) -> discord.Embed:
-        desc = self.page2_group_details_desc
-        if len(desc) > 4096:
-            desc = desc[:4090] + "\n[...]" # Truncate and add indicator
+    def _make_page2_embed(self, description: str) -> discord.Embed:
+        # Description is prepared by the caller, including any necessary truncation
+        # for the embed part. Overflow is handled by sending followup messages.
         return discord.Embed(
             title=f"Group Details: {self.username} (ID: {self.user_id})", 
-            description=desc, 
+            description=description,
             color=discord.Color.blue()
         )
 
@@ -658,22 +657,65 @@ class UserCheckView(discord.ui.View):
 
     async def toggle_details_callback(self, interaction: discord.Interaction):
         # This interaction is for the button press
-        await interaction.response.defer() # Acknowledge button press *silently*
+        await interaction.response.defer() # Acknowledge button press
 
         self.showing_group_details = not self.showing_group_details
-        
-        current_embed = self._make_page2_embed() if self.showing_group_details else self._make_page1_embed()
-        
         self._update_button() # Update button label/style for the next state
 
         attachments_to_send = []
-        if not self.showing_group_details and self.graph_bytesio_buffer: # If switching to Page 1 and graph exists
-            self.graph_bytesio_buffer.seek(0) # Reset buffer
-            new_graph_file = discord.File(self.graph_bytesio_buffer, filename=f"badge_graph_{self.username}_{self.user_id}.png")
-            attachments_to_send.append(new_graph_file)
-        
+        new_embed = None
+        followup_messages_to_send = [] # List of strings for followup messages
+
+        if self.showing_group_details:
+            # Page 2: Group Details
+            full_desc_page2 = self.page2_group_details_desc
+            # Define the separator that marks the beginning of the "Overall Group Rank Status"
+            separator = "\n\n**Overall Group Rank Status:**"
+            
+            primary_embed_content = full_desc_page2
+            overflow_content_for_followup = ""
+
+            if separator in full_desc_page2:
+                parts = full_desc_page2.split(separator, 1)
+                group_list_part = parts[0]
+                # The overall_status_part includes the separator itself to maintain formatting
+                overall_status_part_content = separator + parts[1]
+
+                # If the total content (group list + overall status) is too long for one embed
+                if len(full_desc_page2) > 4096:
+                    primary_embed_content = group_list_part
+                    overflow_content_for_followup = overall_status_part_content
+                    
+                    # If the group_list_part itself is too long for the embed, truncate it
+                    if len(primary_embed_content) > 4096:
+                        primary_embed_content = primary_embed_content[:4090] + "\n[...]"
+                # else: everything fits, primary_embed_content remains full_desc_page2 (already set)
+            
+            # Fallback for extremely long content without the expected separator (less likely)
+            elif len(full_desc_page2) > 4096:
+                 primary_embed_content = full_desc_page2[:4090] + "\n[...]"
+
+            new_embed = self._make_page2_embed(description=primary_embed_content)
+
+            if overflow_content_for_followup:
+                # Split the overflow_content (Overall Group Rank Status part) into 2000-char chunks
+                for i in range(0, len(overflow_content_for_followup), 2000):
+                    followup_messages_to_send.append(overflow_content_for_followup[i:i+2000])
+        else: 
+            # Page 1: Main Info
+            new_embed = self._make_page1_embed() # This handles its own truncation
+            if self.graph_bytesio_buffer: # If switching to Page 1 and graph exists
+                self.graph_bytesio_buffer.seek(0) # Reset buffer
+                new_graph_file = discord.File(self.graph_bytesio_buffer, filename=f"badge_graph_{self.username}_{self.user_id}.png")
+                attachments_to_send.append(new_graph_file)
+
         # Edit the original message sent by the bot
-        await interaction.message.edit(embed=current_embed, view=self, attachments=attachments_to_send)
+        await interaction.message.edit(embed=new_embed, view=self, attachments=attachments_to_send)
+
+        # Send any followup messages (e.g., the "Overall Group Rank Status" part)
+        for msg_content in followup_messages_to_send:
+            await interaction.followup.send(content=msg_content)
+            await asyncio.sleep(0.5) # Small delay between multiple followup messages
 
 @tree.command(name="check", description="Check Roblox user acceptance criteria. Supports multiple, comma-separated.")
 @app_commands.describe(identifiers_str="Comma-separated Roblox user IDs or Usernames to check")
