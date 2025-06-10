@@ -23,10 +23,10 @@ import threading
 load_dotenv()
 
 # Discord token (still recommended to keep token in .env or environment variable)
-TOKEN = os.getenv("ATOKEN")
+TOKEN = os.getenv("TOKEN")
 XTRACKER_API_KEY = os.getenv("XTRACKER_API_KEY")
 CLANWARE_API_KEY = os.getenv("CLANWARE_API_KEY")
-
+CLANWARE_BASE_URL = "https://justice.clanware.org/api/v1"
 
 # New Spreadsheet ID from your provided Google Sheets link
 SPREADSHEET_ID = "1C-Jd9G7XQVDhiKfJC0PyFMPr5tqXURrKY5KH9Q_1F6s"
@@ -188,77 +188,50 @@ def plot_badge_history(date_list, username):
     plt.close()
     return buf
 
-def check_clanware_report(user_id: int) -> tuple[bool, bool | str]:
+def check_clanware_report(user_id: int, max_retries=3, backoff_factor=1):
     """
-    Checks if a user is flagged by the Clanware API (justice.clanware.org).
-    A 404 response from Clanware means the user is not in their database, thus not flagged.
-
-    Returns:
-        A tuple (api_call_successful: bool, result: bool | str).
-        If api_call_successful is True, result is a boolean (True if flagged, False if not).
-        If api_call_successful is False, result is a string message explaining the issue.
+    Checks if a Roblox user is flagged by Clanware.
+    Returns (success: bool, flagged: bool or error message str)
     """
     if not CLANWARE_API_KEY:
-        print("Warning: CLANWARE_API_KEY is not set. Clanware check will be skipped.")
-        return False, "Clanware API key not configured. Check skipped."
+        return False, "Clanware API key not configured."
 
-    CLANWARE_JUSTICE_BASE_URL = "https://justice.clanware.org/api/v1" # As per docs
-    url = f"{CLANWARE_JUSTICE_BASE_URL}/users/{user_id}"
+    url = f"{CLANWARE_BASE_URL}/users/{user_id}"
     headers = {
-        'Authorization': f'Bearer {CLANWARE_API_KEY}',
-        'Accept': 'application/json',
-        'User-Agent': 'RobloxUserCheckBot/1.0 (Contact: YourDiscord#Tag or Email)' # Replace with your bot's info
+        "Authorization": f"Bearer {CLANWARE_API_KEY}",
+        "Accept": "application/json",
+        "User-Agent": "YourBotName/1.0"
     }
 
-    max_retries = 3
-    backoff_factor = 1
-
     for attempt in range(max_retries):
-        print(f"Clanware: Attempt {attempt + 1}/{max_retries} for user ID: {user_id} at {url}")
         try:
-            response = requests.get(url, headers=headers, timeout=10)
-            response.raise_for_status() # Raises HTTPError for 4xx/5xx client/server errors
-
-            # Successful 2xx response
-            try:
-                data = response.json()
-            except requests.exceptions.JSONDecodeError:
-                print(f"Clanware: JSONDecodeError for user {user_id}. Status: {response.status_code}. Response: {response.text[:200]}")
-                return False, "Error decoding Clanware API response (success status but bad JSON)."
-
-            is_exploiter = data.get('isExploiter', False) # Use camelCase from justice.clanware.org docs
-            is_degenerate = data.get('isDegenerate', False) # Use camelCase from justice.clanware.org docs
-            
-            if not isinstance(is_exploiter, bool) or not isinstance(is_degenerate, bool):
-                print(f"Clanware API response for user {user_id} has unexpected types for 'isExploiter' or 'isDegenerate'. Data: {data}")
-                return False, "Clanware API response format unexpected (field types)."
-
-            is_flagged = is_exploiter or is_degenerate
-            print(f"Clanware: Check successful for user ID: {user_id}. Flagged: {is_flagged}")
+            resp = requests.get(url, headers=headers, timeout=10)
+            if resp.status_code == 404:
+                # User not flagged
+                return True, False
+            if resp.status_code == 403:
+                return False, "Clanware API HTTP 403 Forbidden: Check your API key and permissions."
+            resp.raise_for_status()
+            data = resp.json()
+            is_flagged = data.get("is_exploiter", False) or data.get("is_degenerate", False)
             return True, is_flagged
-
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 404:
-                # User not found in Clanware database, so not flagged. This is a "successful" outcome for the check.
-                print(f"Clanware: User {user_id} not found (404), thus not flagged.")
-                return True, False # API call was successful in determining user is not listed
-            
-            print(f"Clanware: HTTPError on attempt {attempt + 1}/{max_retries} for user {user_id}: {e}")
+        except requests.exceptions.RequestException as e:
             if attempt == max_retries - 1:
-                return False, f"Clanware API HTTP error ({e.response.status_code}) after {max_retries} attempts."
-            
-        except requests.exceptions.RequestException as e: # Catches ConnectionError, Timeout, etc.
-            print(f"Clanware: RequestException on attempt {attempt + 1}/{max_retries} for user {user_id}: {e}")
-            if attempt == max_retries - 1:
-                return False, f"Clanware API request error ({type(e).__name__}) after {max_retries} attempts."
-        
-        if attempt < max_retries - 1:
+                return False, f"Clanware API request error ({type(e).__name__}): {e}"
             time.sleep(backoff_factor * (2 ** attempt))
+    return False, "Clanware check failed after all retries."
 
-    return False, f"Clanware check failed for user {user_id} after all retries."
-
-# Add this function or modify your existing group fetching logic
-
+# Example usage in your Discord bot command (pseudo-code):
+async def clanware_check_command(ctx, roblox_user_id: int):
+    success, result = check_clanware_report(roblox_user_id)
+    if not success:
+        await ctx.send(f"⚠️ Clanware Check Error: {result}")
+        return
+    if result:
+        await ctx.send(f"✅ Clanware Flagged: Yes (User ID {roblox_user_id})")
+    else:
+        await ctx.send(f"❌ Clanware Flagged: No (User ID {roblox_user_id})")
+        
 def get_group_roles_data(user_id: int):
     """
     Fetches all group and role information for a user from Roblox API.
