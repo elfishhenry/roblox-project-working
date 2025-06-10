@@ -190,87 +190,112 @@ def plot_badge_history(date_list, username):
 
 def check_clanware_report(user_id: int) -> tuple[bool, bool | str]:
     """
-    Checks if a user is flagged by the Clanware API.
+    Checks if a user is flagged by the Clanware API (justice.clanware.org).
+    A 404 response from Clanware means the user is not in their database, thus not flagged.
 
     Returns:
         A tuple (api_call_successful: bool, result: bool | str).
-        If api_call_successful is True, result is a boolean indicating if the user is flagged.
+        If api_call_successful is True, result is a boolean (True if flagged, False if not).
         If api_call_successful is False, result is a string message explaining the issue.
     """
     if not CLANWARE_API_KEY:
         print("Warning: CLANWARE_API_KEY is not set. Clanware check will be skipped.")
         return False, "Clanware API key not configured. Check skipped."
 
-    # Using the API endpoint and authentication method similar to test.py
-    # Ensure CLANWARE_API_KEY is just the key, not "Bearer <key>"
+    CLANWARE_JUSTICE_BASE_URL = "https://justice.clanware.org/api/v1" # As per docs
+    url = f"{CLANWARE_JUSTICE_BASE_URL}/users/{user_id}"
     headers = {
         'Authorization': f'Bearer {CLANWARE_API_KEY}',
         'Accept': 'application/json',
         'User-Agent': 'RobloxUserCheckBot/1.0 (Contact: YourDiscord#Tag or Email)' # Replace with your bot's info
     }
-    # Using the base URL from test.py context, assuming /users/{user_id} is the correct path
-    # Adjust if the exact endpoint for checking a user differs for api.clanware.org
-    url = f"https://api.clanware.org/api/v1/users/{user_id}"
 
-    print(f"Checking Clanware for user ID: {user_id} at {url}")
-    response = safe_get(url, headers=headers)
+    max_retries = 3
+    backoff_factor = 1
 
-    if response is None:
-        return False, "Could not connect to Clanware API. Please check manually."
+    for attempt in range(max_retries):
+        print(f"Clanware: Attempt {attempt + 1}/{max_retries} for user ID: {user_id} at {url}")
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            response.raise_for_status() # Raises HTTPError for 4xx/5xx client/server errors
 
-    try:
-        data = response.json()
+            # Successful 2xx response
+            try:
+                data = response.json()
+            except requests.exceptions.JSONDecodeError:
+                print(f"Clanware: JSONDecodeError for user {user_id}. Status: {response.status_code}. Response: {response.text[:200]}")
+                return False, "Error decoding Clanware API response (success status but bad JSON)."
 
-        # Adapting to the response structure seen in test.py (is_exploiter, is_degenerate)
-        # Assuming either being an exploiter or degenerate means they are "flagged"
-        is_exploiter = data.get('is_exploiter', False)
-        is_degenerate = data.get('is_degenerate', False)
-        is_flagged = is_exploiter or is_degenerate
+            is_exploiter = data.get('isExploiter', False) # Use camelCase from justice.clanware.org docs
+            is_degenerate = data.get('isDegenerate', False) # Use camelCase from justice.clanware.org docs
+            
+            if not isinstance(is_exploiter, bool) or not isinstance(is_degenerate, bool):
+                print(f"Clanware API response for user {user_id} has unexpected types for 'isExploiter' or 'isDegenerate'. Data: {data}")
+                return False, "Clanware API response format unexpected (field types)."
 
-        if not isinstance(is_exploiter, bool) or not isinstance(is_degenerate, bool):
-            print(f"Clanware API response for user {user_id} has unexpected types for 'is_exploiter' or 'is_degenerate'. Response: {data}")
-            return False, "Clanware API response format unexpected (field types). Please check manually."
+            is_flagged = is_exploiter or is_degenerate
+            print(f"Clanware: Check successful for user ID: {user_id}. Flagged: {is_flagged}")
+            return True, is_flagged
 
-        print(f"Clanware check successful for user ID: {user_id}. Flagged: {is_flagged}")
-        return True, is_flagged
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 404:
+                # User not found in Clanware database, so not flagged. This is a "successful" outcome for the check.
+                print(f"Clanware: User {user_id} not found (404), thus not flagged.")
+                return True, False # API call was successful in determining user is not listed
+            
+            print(f"Clanware: HTTPError on attempt {attempt + 1}/{max_retries} for user {user_id}: {e}")
+            if attempt == max_retries - 1:
+                return False, f"Clanware API HTTP error ({e.response.status_code}) after {max_retries} attempts."
+            
+        except requests.exceptions.RequestException as e: # Catches ConnectionError, Timeout, etc.
+            print(f"Clanware: RequestException on attempt {attempt + 1}/{max_retries} for user {user_id}: {e}")
+            if attempt == max_retries - 1:
+                return False, f"Clanware API request error ({type(e).__name__}) after {max_retries} attempts."
+        
+        if attempt < max_retries - 1:
+            time.sleep(backoff_factor * (2 ** attempt))
 
-    except requests.exceptions.JSONDecodeError:
-        print(f"Error decoding Clanware API JSON response for user {user_id}. Response text: {response.text[:200]}")
-        return False, "Error decoding Clanware API response. Please check manually."
-    except Exception as e: # Catch any other unexpected errors during processing
-        print(f"Unexpected error processing Clanware response for user {user_id}: {e}")
-        return False, "An unexpected error occurred with the Clanware check. Please check manually."
+    return False, f"Clanware check failed for user {user_id} after all retries."
 
 # Add this function or modify your existing group fetching logic
 
 def get_group_roles_data(user_id: int):
-    """Fetches all group and role information for a user from Roblox API."""
+    """
+    Fetches all group and role information for a user from Roblox API.
+    Returns a tuple: (list_of_group_roles | None, is_data_complete: bool).
+    'is_data_complete' is False if an error occurred that might result in partial data.
+    Returns (None, False) if the initial API call fails.
+    """
     all_group_roles = []
     cursor = None
     limit = 100 # Roblox API default limit for this endpoint is often 10, max is 100
+    is_complete = True # Assume complete until an error occurs post-initial fetch
 
     while True:
         url = f"{ROBLOX_GROUPS_API}/users/{user_id}/groups/roles?limit={limit}&sortOrder=Asc"
         if cursor:
             url += f"&cursor={cursor}"
-        
+
         resp = safe_get(url)
         if not resp:
             # If the first call fails, return None. If a subsequent call fails, return what's been collected.
-            return None if not all_group_roles else all_group_roles
-        
+            # If a subsequent call fails, return what's been collected but mark as incomplete.
+            return (None, False) if not all_group_roles else (all_group_roles, False)
+
         try:
             data = resp.json()
             current_page_data = data.get("data", [])
             all_group_roles.extend(current_page_data)
-            
+
             cursor = data.get("nextPageCursor")
             if not cursor: # No more pages
                 break
         except requests.exceptions.JSONDecodeError:
             print(f"JSONDecodeError fetching group roles for {user_id} from {url}: {resp.text[:200]}")
-            return None if not all_group_roles else all_group_roles # Similar error handling
-    return all_group_roles
+            # Similar to above: if first call, (None, False), else (partial_data, False)
+            is_complete = False # Mark as incomplete
+            return (None, False) if not all_group_roles else (all_group_roles, False)
+    return all_group_roles, is_complete
 
 def get_all_rank_values_for_group(group_id: int) -> list[int] | None:
     """Fetches all unique rank values for a specific group."""
@@ -310,23 +335,25 @@ def get_all_rank_values_for_group(group_id: int) -> list[int] | None:
         
     return sorted(list(all_ranks)) # Return a sorted list of unique rank values
 
-def get_formatted_group_details(user_id: int) -> tuple[bool, bool, str, str, int]:
+def get_formatted_group_details(
+    group_roles_list: list[dict] | None,
+    is_data_complete: bool
+) -> tuple[str, bool, int]:
     """
     Fetches group data, checks if user's rank > 1 in all, and formats details for display.
-    Returns: 
-        - api_call_successful (bool)
-        - all_ranks_above_one (bool)
-        - rank_check_message (str): Message for the main page about rank criteria.
-        - detailed_group_string_page2 (str): Formatted string for the group details page.
-        - groups_count (int)
-    """
-    group_roles_list = get_group_roles_data(user_id)
+    Assumes group_roles_list and is_data_complete are from get_group_roles_data.
 
-    if group_roles_list is None: # API call failed
-        return False, False, "Could not fetch group details due to an API error."
-    
-    if not group_roles_list:
-        return True, True, "User is not in any groups."
+    Returns:
+        - detailed_group_string_page2 (str): Formatted string for the group details page.
+        - all_ranks_above_one (bool): True if all group ranks are > 1 (for informational purposes on page 2).
+        - groups_count (int): Number of groups processed.
+    """
+    if group_roles_list is None: # Indicates total failure from get_group_roles_data
+        return "Could not fetch group details due to an API error.", False, 0
+
+    if not group_roles_list: # User is in no groups
+        # is_data_complete doesn't matter much here if the list is empty.
+        return "User is not in any groups.", True, 0 # all_ranks_ok is vacuously true
 
     groups_count = len(group_roles_list)
     all_ranks_ok = True
@@ -353,7 +380,6 @@ def get_formatted_group_details(user_id: int) -> tuple[bool, bool, str, str, int
             offending_groups_for_rank_check.append(f"{group_name} (Rank: {user_rank_in_group})")
 
     # Message for Page 1 (main check)
-    # rank_criteria_met_page1_msg is no longer needed for page 1 display of this specific line
 
     # Build Page 2 content
     page2_content_parts = ["**Group Membership & Ranks:**\n"]
@@ -362,14 +388,10 @@ def get_formatted_group_details(user_id: int) -> tuple[bool, bool, str, str, int
     else:
         page2_content_parts.append("No specific group details to display.")
 
-    page2_content_parts.append(f"\n\n**Overall Group Rank Status:**")
-    page2_content_parts.append(f"All Group Ranks > 1: {'Yes' if all_ranks_ok else 'No'}")
-    if not all_ranks_ok and offending_groups_for_rank_check:
-        # Ensure this list is also formatted nicely if it gets long
-        offending_groups_str = "\n- ".join(offending_groups_for_rank_check)
-        page2_content_parts.append(f"Groups not meeting rank > 1:\n- {offending_groups_str}")
-    
-    return True, all_ranks_ok, "\n".join(page2_content_parts)
+    if not is_data_complete and group_roles_list: # Data was partial and not empty
+        page2_content_parts.append("\n\n**Warning:** This group list might be incomplete due to an API error during fetching.")
+
+    return "\n".join(page2_content_parts), all_ranks_ok, groups_count
 
 def check_account_age(user_created_date_str):
     created_date = parse_roblox_date(user_created_date_str)
@@ -413,32 +435,51 @@ def get_badge_dates(user_id):
 
     # 1. Fetch all badge metadata (primarily for their IDs)
     print(f"Fetching all badge metadata for user {user_id}...")
+    page_num = 0 # For logging
     while True:
+        page_num += 1
         # Using the proxy API for fetching badge list
         url = f"{ROBLOX_BADGES_PROXY_API}/users/{user_id}/badges?limit={limit}&sortOrder=Desc"
         if cursor:
             url += f"&cursor={cursor}"
         
+        print(f"Fetching badge metadata page {page_num} for user {user_id} from {url}")
         resp = safe_get(url)
         if not resp:
+            print(f"Warning: Failed to fetch badge metadata page {page_num} for user {user_id} from {url} (safe_get returned None). Badge metadata list will be incomplete.")
             if not all_badge_metadata:
                 initial_metadata_call_failed = True
-            break
+            break # Stop collecting metadata
         
         try:
             data = resp.json()
             current_page_data = data.get("data", [])
+            if not current_page_data and data.get("nextPageCursor"):
+                print(f"Warning: Badge metadata page {page_num} for user {user_id} returned empty data but has a nextPageCursor. Continuing cautiously.")
+            
             all_badge_metadata.extend(current_page_data)
+            
             if len(all_badge_metadata) % 500 == 0 and current_page_data: # Progress print
                  print(f"Fetched {len(all_badge_metadata)} badge metadata items for user {user_id}...")
+            
+            prev_cursor = cursor # Store previous cursor for logging if next is None but data was received
             cursor = data.get("nextPageCursor")
+
             if not cursor:
+                if current_page_data:
+                    print(f"Finished fetching badge metadata for user {user_id}. No nextPageCursor on page {page_num}. Total metadata items: {len(all_badge_metadata)}")
+                else:
+                    print(f"Finished fetching badge metadata for user {user_id}. No nextPageCursor and no data on page {page_num} (cursor was {prev_cursor}). Total metadata items: {len(all_badge_metadata)}")
                 break
         except requests.exceptions.JSONDecodeError:
-            print(f"JSONDecodeError while fetching badge metadata from {url}, response: {resp.text[:200]}")
+            print(f"JSONDecodeError while fetching badge metadata page {page_num} for user {user_id} from {url}, response: {resp.text[:200]}. Badge metadata list will be incomplete.")
             if not all_badge_metadata:
                 initial_metadata_call_failed = True
-            break
+            break # Stop collecting metadata
+        
+        # If there's a next page, add a small delay before fetching it
+        if cursor:
+            time.sleep(0.5) # 500ms delay
     
     if initial_metadata_call_failed and not all_badge_metadata:
         print(f"Initial metadata call failed for user {user_id}. No badges found.")
@@ -544,11 +585,11 @@ def check_user_acceptance(user_id, generate_graph=False): # Added generate_graph
     clanware_api_success, clanware_result = check_clanware_report(user_id)
 
     # Group checks using the new helper
-    # Fetch group count separately now as get_formatted_group_details no longer returns it
-    group_roles_list_for_count = get_group_roles_data(user_id) # Call once for count
-    groups_count = len(group_roles_list_for_count) if group_roles_list_for_count is not None else 0
-    group_api_success, all_ranks_ok_for_criteria, group_details_page2 = get_formatted_group_details(user_id)
-
+    group_roles_list_data, group_data_is_complete = get_group_roles_data(user_id)
+    group_details_page2_str, _, actual_groups_count = get_formatted_group_details( # all_ranks_ok from here is for page 2 info only
+        group_roles_list_data, group_data_is_complete
+    )
+    
     created_date_str = user_info.get("created")
     account_age_days = check_account_age(created_date_str) if created_date_str else 0
     friends = get_friends_count(user_id)
@@ -571,11 +612,17 @@ def check_user_acceptance(user_id, generate_graph=False): # Added generate_graph
         f"📆 Account Age: {account_age_days} days (Required: 90) → {'✅' if account_age_days >= 90 else '❌'}",
         f"🤝 Friends Count: {friends} (Required: 10) → {'✅' if friends >= 10 else '❌'}",
         f"🏅 Badges: {total_badges_found} total ({badge_pages} pages, Required: 10 pages) → {'✅' if badge_pages >= 10 else '❌'}",
-        f"👥 Groups Count: {groups_count} (Required: 2) → {'✅' if groups_count >= 2 else '❌'}",
-    ]) # Removed the "All Group Ranks > 1" line from page 1
-    if not group_api_success: # Still note if the API call for groups failed on page 1
-        result_lines.append(f"⚠️ Could not fetch group data for detailed checks (API error).")
+    ])
 
+    if group_roles_list_data is None: # Total failure to get group data
+        result_lines.append(f"👥 Groups Count: Error fetching (Required: 2) → ❌")
+        result_lines.append(f"⚠️ Could not fetch group data (API error).")
+    else:
+        groups_check_symbol = '✅' if actual_groups_count >= 2 else '❌'
+        result_lines.append(f"👥 Groups Count: {actual_groups_count} (Required: 2) → {groups_check_symbol}")
+        if not group_data_is_complete and actual_groups_count > 0: # Only show warning if some groups were fetched but data is incomplete
+            result_lines.append(f"⚠️ Group list might be incomplete due to API errors.")
+            
     # Determine overall status, considering Clanware API success
     is_negatively_flagged_by_clanware = clanware_api_success and clanware_result
     if is_blacklisted or has_xtracker_report or owns_cheats or is_negatively_flagged_by_clanware:
@@ -584,7 +631,7 @@ def check_user_acceptance(user_id, generate_graph=False): # Added generate_graph
         account_age_days >= 90,
         friends >= 10,
         badge_pages >= 10,
-        groups_count >= 2,
+        (actual_groups_count >= 2 if group_roles_list_data is not None else False), # Check count only if data fetch wasn't a total error
         # The 'all_ranks_ok_for_criteria' is now informational for page 2, not a strict pass/fail for page 1's overall status.
     ]):
         result_lines.append("\n✅ User **meets** the acceptance criteria.")
@@ -604,7 +651,7 @@ def check_user_acceptance(user_id, generate_graph=False): # Added generate_graph
             if not graph_buffer:
                 text_result_page1 += "\n\n⚠️ Could not generate badge graph."
 
-    return text_result_page1, graph_buffer, group_details_page2, username
+    return text_result_page1, graph_buffer, group_details_page2_str, username
 
 class UserCheckView(discord.ui.View):
     def __init__(self, user_id: int, username: str,
@@ -850,7 +897,7 @@ async def detailed_group_ranks(interaction: discord.Interaction, identifier: str
     await interaction.followup.send(f"⏳ Fetching detailed group rank information for **{username}** (ID: {user_id}). This might take a while...", ephemeral=True)
 
     # This part will be slow
-    group_roles_list = await loop.run_in_executor(None, get_group_roles_data, user_id)
+    group_roles_list, _ = await loop.run_in_executor(None, get_group_roles_data, user_id) # Ignore is_complete flag here
 
     if group_roles_list is None:
         await interaction.edit_original_response(content=f"❌ Could not fetch group list for **{username}**.")
