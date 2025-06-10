@@ -23,7 +23,7 @@ import threading
 load_dotenv()
 
 # Discord token (still recommended to keep token in .env or environment variable)
-TOKEN = os.getenv("TOKEN")
+TOKEN = os.getenv("ATOKEN")
 XTRACKER_API_KEY = os.getenv("XTRACKER_API_KEY")
 CLANWARE_API_KEY = os.getenv("CLANWARE_API_KEY")
 
