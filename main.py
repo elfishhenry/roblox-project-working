@@ -31,7 +31,7 @@ CLANWARE_BASE_URL = "https://justice.clanware.org/api/justice/legacy" # Define t
 # New Spreadsheet ID from your provided Google Sheets link
 SPREADSHEET_ID = "1C-Jd9G7XQVDhiKfJC0PyFMPr5tqXURrKY5KH9Q_1F6s"
 
-# Your Google Service Account JSON credentials as a dict (paste your JSON here)
+
 SERVICE_ACCOUNT_INFO = {
   "type": "service_account",
   "project_id": "searchy-428415",
@@ -233,7 +233,7 @@ def check_clanware_report(user_id: int, max_retries=3, backoff_factor=1):
 
     url = f"{CLANWARE_BASE_URL}/{user_id}"
     headers = {
-        "Authorization": f"Bearer {CLANWARE_API_KEY}",
+        "Authorization": f"{CLANWARE_API_KEY}",
         "Accept": "application/json",
         "User-Agent": "acceptance/1.0"
     }
@@ -253,7 +253,7 @@ def check_clanware_report(user_id: int, max_retries=3, backoff_factor=1):
             resp.raise_for_status()
             data = resp.json()
             print(f"Clanware: API Response Data for {user_id}: {data}")
-            is_flagged = data.get("is_exploiter", False) or data.get("is_degenerate", False)
+            is_flagged = data.get("exploiter", False) or data.get("degenerate", False)
             print(f"Clanware: User {user_id} is_flagged: {is_flagged}")
             return True, is_flagged
         except requests.exceptions.RequestException as e:
