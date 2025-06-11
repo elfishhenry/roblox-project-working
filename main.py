@@ -26,12 +26,12 @@ load_dotenv()
 TOKEN = os.getenv("ATOKEN")
 XTRACKER_API_KEY = os.getenv("XTRACKER_API_KEY")
 CLANWARE_API_KEY = os.getenv("CLANWARE_API_KEY")
-CLANWARE_BASE_URL = "https://justice.clanware.org/api/v1"
+CLANWARE_BASE_URL = "https://justice.clanware.org/api/justice/legacy" # Define the Clanware base URL
 
 # New Spreadsheet ID from your provided Google Sheets link
 SPREADSHEET_ID = "1C-Jd9G7XQVDhiKfJC0PyFMPr5tqXURrKY5KH9Q_1F6s"
 
-# Your Google Service Account JSON credentials as a dict (paste your JSON here)
+
 SERVICE_ACCOUNT_INFO = {
   "type": "service_account",
   "project_id": "searchy-428415",
@@ -60,16 +60,50 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
+BLACKLIST_REFRESH_LOCK = threading.Lock()
+
+# Global cache for blacklist
+CACHED_BLACKLIST = set()
+LAST_BLACKLIST_REFRESH_TIME = 0
+BLACKLIST_CACHE_DURATION_SECONDS = 60 * 15  # Cache for 15 minutes
 
 # Setup Google Sheets client
 def get_blacklisted_ids():
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(SERVICE_ACCOUNT_INFO, scope)
-    client = gspread.authorize(creds)
-    print("blacklisted checked")
-    sheet = client.open_by_key(SPREADSHEET_ID).get_worksheet(1)  # second sheet (index 1)
-    blacklist_column = sheet.col_values(4)  # Column D
-    return set(filter(str.isdigit, blacklist_column))  # Only numeric IDs
+    global CACHED_BLACKLIST, LAST_BLACKLIST_REFRESH_TIME
+    current_time = time.time()
+
+    needs_refresh = not CACHED_BLACKLIST or \
+                    (current_time - LAST_BLACKLIST_REFRESH_TIME > BLACKLIST_CACHE_DURATION_SECONDS)
+
+    if needs_refresh:
+        if BLACKLIST_REFRESH_LOCK.acquire(blocking=False):
+            try:
+                # Re-check condition inside lock in case another thread refreshed it
+                current_time_in_lock = time.time() # Get fresh time
+                if not CACHED_BLACKLIST or \
+                   (current_time_in_lock - LAST_BLACKLIST_REFRESH_TIME > BLACKLIST_CACHE_DURATION_SECONDS):
+                    print("Refreshing blacklist cache (lock acquired)...")
+                    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+                    creds = ServiceAccountCredentials.from_json_keyfile_dict(SERVICE_ACCOUNT_INFO, scope)
+                    client = gspread.authorize(creds)
+                    sheet = client.open_by_key(SPREADSHEET_ID).get_worksheet(1)  # second sheet (index 1)
+                    blacklist_column = sheet.col_values(4)  # Column D
+                    CACHED_BLACKLIST = set(filter(str.isdigit, blacklist_column))  # Only numeric IDs
+                    LAST_BLACKLIST_REFRESH_TIME = current_time_in_lock
+                    print(f"Blacklist cache refreshed. {len(CACHED_BLACKLIST)} IDs loaded.")
+                else:
+                    print("Blacklist cache was already refreshed by another thread while acquiring lock.")
+            except gspread.exceptions.APIError as e:
+                print(f"APIError refreshing blacklist cache: {e}. Using stale cache if available.")
+            except Exception as e:
+                print(f"Unexpected error refreshing blacklist cache: {e}. Using stale cache if available.")
+            finally:
+                BLACKLIST_REFRESH_LOCK.release()
+        else:
+            print("Blacklist refresh already in progress. Using current (potentially stale) cache.")
+    else:
+        print("Using cached blacklist.")
+    return CACHED_BLACKLIST
     
 
 def safe_get(url, method="GET", params=None, json_payload=None, max_retries=3, backoff_factor=1, headers=None):
@@ -195,32 +229,41 @@ def check_clanware_report(user_id: int, max_retries=3, backoff_factor=1):
     """
     if not CLANWARE_API_KEY:
         return False, "Clanware API key not configured."
+    print(f"Clanware: Checking user ID: {user_id}")
 
-    url = f"{CLANWARE_BASE_URL}/users/{user_id}"
+    url = f"{CLANWARE_BASE_URL}/{user_id}"
     headers = {
-        "Authorization": f"Bearer {CLANWARE_API_KEY}",
+        "Authorization": f"{CLANWARE_API_KEY}",
         "Accept": "application/json",
-        "User-Agent": "YourBotName/1.0"
+        "User-Agent": "acceptance/1.0"
     }
+    print(f"Clanware: Requesting URL: {url}")
 
     for attempt in range(max_retries):
         try:
+            print(f"Clanware: Attempt {attempt + 1}")
             resp = requests.get(url, headers=headers, timeout=10)
+            print(f"Clanware: Response Status Code: {resp.status_code}")
             if resp.status_code == 404:
-                # User not flagged
+                print(f"Clanware: User {user_id} not found (404), considered not flagged.")
                 return True, False
             if resp.status_code == 403:
+                print(f"Clanware: API Forbidden (403) for user {user_id}. Check API key/permissions.")
                 return False, "Clanware API HTTP 403 Forbidden: Check your API key and permissions."
             resp.raise_for_status()
             data = resp.json()
-            is_flagged = data.get("is_exploiter", False) or data.get("is_degenerate", False)
+            print(f"Clanware: API Response Data for {user_id}: {data}")
+            is_flagged = data.get("exploiter", False) or data.get("degenerate", False)
+            print(f"Clanware: User {user_id} is_flagged: {is_flagged}")
             return True, is_flagged
         except requests.exceptions.RequestException as e:
+            print(f"Clanware: RequestException on attempt {attempt + 1} for user {user_id}: {e}")
             if attempt == max_retries - 1:
                 return False, f"Clanware API request error ({type(e).__name__}): {e}"
             time.sleep(backoff_factor * (2 ** attempt))
+    print(f"Clanware: Check failed after all retries for user {user_id}.")
     return False, "Clanware check failed after all retries."
-        
+
 def get_group_roles_data(user_id: int):
     """
     Fetches all group and role information for a user from Roblox API.
@@ -565,7 +608,10 @@ def check_user_acceptance(user_id, generate_graph=False): # Added generate_graph
         f"❌ Owns Cheats (xTracker): {'Yes' if owns_cheats else 'No'}",
     ]
     if clanware_api_success:
-        result_lines.append(f"❌ Clanware Flagged: {'Yes' if clanware_result else 'No'}")
+        if clanware_result: # True if user is flagged (e.g., is_exploiter or is_degenerate is true)
+            result_lines.append(f"❌ Clanware Flagged: Yes")
+        else: # False if user is not flagged (e.g., API returned 404 or explicit non-flagged status)
+            result_lines.append(f"✅ Clanware Flagged: No")
     else:
         result_lines.append(f"⚠️ Clanware Check: {clanware_result}") # Display the error/info message
 
@@ -903,7 +949,12 @@ async def detailed_group_ranks(interaction: discord.Interaction, identifier: str
 @bot.event
 async def on_ready():
     await tree.sync()  # Sync commands with Discord
+    # Initial population of the blacklist cache
+    print("Bot is ready. Performing initial blacklist cache population...")
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, get_blacklisted_ids)
     print(f"Logged in as {bot.user}!")
+    
 
 
 
