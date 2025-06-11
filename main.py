@@ -23,7 +23,7 @@ import threading
 load_dotenv()
 
 # Discord token (still recommended to keep token in .env or environment variable)
-TOKEN = os.getenv("TOKEN")
+TOKEN = os.getenv("ATOKEN")
 XTRACKER_API_KEY = os.getenv("XTRACKER_API_KEY")
 CLANWARE_API_KEY = os.getenv("CLANWARE_API_KEY")
 CLANWARE_BASE_URL = "https://justice.clanware.org/api/v1"
@@ -220,17 +220,6 @@ def check_clanware_report(user_id: int, max_retries=3, backoff_factor=1):
                 return False, f"Clanware API request error ({type(e).__name__}): {e}"
             time.sleep(backoff_factor * (2 ** attempt))
     return False, "Clanware check failed after all retries."
-
-# Example usage in your Discord bot command (pseudo-code):
-async def clanware_check_command(ctx, roblox_user_id: int):
-    success, result = check_clanware_report(roblox_user_id)
-    if not success:
-        await ctx.send(f"⚠️ Clanware Check Error: {result}")
-        return
-    if result:
-        await ctx.send(f"✅ Clanware Flagged: Yes (User ID {roblox_user_id})")
-    else:
-        await ctx.send(f"❌ Clanware Flagged: No (User ID {roblox_user_id})")
         
 def get_group_roles_data(user_id: int):
     """
